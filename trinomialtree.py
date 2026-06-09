@@ -10,6 +10,7 @@ from hullwhite import (
     get_bond_files,
     get_business_day_convention,
     get_calendar,
+    get_coupon_rate,
     get_day_count,
     get_frequency,
     load_json,
@@ -60,16 +61,25 @@ def build_callability_schedule(bond_data):
     return callability_schedule
 
 
-def build_callable_bond(bond_data):
-    if 'fixed_coupon_rate' not in bond_data:
-        raise ValueError('Trinomial tree callable bond requires fixed_coupon_rate')
-
+def build_callable_bond(bond_data, projection_curve, eval_date):
     issue_date = parse_date(bond_data['issue_date'])
-    maturity_date = parse_date(bond_data.get('maturity_date', bond_data.get('end_date')))
+    if 'maturity_date' in bond_data:
+        maturity_date = parse_date(bond_data['maturity_date'])
+    elif 'end_date' in bond_data:
+        maturity_date = parse_date(bond_data['end_date'])
+    else:
+        raise ValueError('Callable bond JSON must include maturity_date or end_date')
     calendar = get_calendar(bond_data['calendar'])
     business_day_convention = get_business_day_convention(bond_data['business_day_convention'])
     date_generation_rule = getattr(ql.DateGeneration, bond_data.get('date_generation', 'Forward'))
-    coupon_frequency = get_frequency(bond_data.get('coupon_frequency', 'Semiannual'))
+    structure = bond_data.get('coupon_structure', 'fixed')
+    if structure == 'fixed_to_float':
+        coupon_frequency_name = bond_data.get('float_coupon_frequency', bond_data.get('coupon_frequency', 'Semiannual'))
+    elif structure == 'cms_resettable':
+        coupon_frequency_name = bond_data.get('cms_coupon_frequency', bond_data.get('coupon_frequency', 'Semiannual'))
+    else:
+        coupon_frequency_name = bond_data.get('coupon_frequency', 'Semiannual')
+    coupon_frequency = get_frequency(coupon_frequency_name)
 
     schedule = ql.Schedule(
         issue_date,
@@ -85,7 +95,16 @@ def build_callable_bond(bond_data):
     settlement_days = int(bond_data.get('settlement_days', 2))
     face_amount = float(bond_data.get('par', 100.0))
     redemption = float(bond_data.get('redemption', face_amount))
-    coupons = [float(bond_data['fixed_coupon_rate'])]
+
+    coupons = []
+    for i in range(1, len(schedule)):
+        d0 = schedule[i - 1]
+        d1 = schedule[i]
+        coupons.append(float(get_coupon_rate(projection_curve, d0, d1, bond_data, eval_date)))
+
+    if not coupons:
+        raise ValueError('Coupon schedule is empty')
+
     callability_schedule = build_callability_schedule(bond_data)
 
     bond = ql.CallableFixedRateBond(
@@ -118,7 +137,7 @@ def price_callable_bond_tree(curve_json, bond_data, issuer_spread_bp=None):
     model = ql.HullWhite(spreaded_curve_handle, model_a, model_sigma)
     engine = ql.TreeCallableFixedRateBondEngine(model, tree_steps, spreaded_curve_handle)
 
-    bond = build_callable_bond(bond_data)
+    bond = build_callable_bond(bond_data, base_curve, evaluation_date)
     bond.setPricingEngine(engine)
 
     return {

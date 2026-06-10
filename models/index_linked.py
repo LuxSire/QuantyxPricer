@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 
 import QuantLib as ql
+import math
 
 try:
     from models import spire
@@ -139,6 +140,53 @@ def price_note(note_data, curve, curve_day_count):
 
 
 def price_index_linked_note(note_data, curve_json):
+    def calculate_yield_to_maturity(cashflows, evaluation_date, current_pv):
+        """
+        Calculate yield-to-maturity (YTM) by solving for y in:
+        PV = sum(CF_i * exp(-y * t_i))
+        Uses Newton-Raphson iteration.
+        """
+        if current_pv <= 0 or not cashflows:
+            return 0.0
+    
+        day_count = ql.Actual365Fixed()
+    
+        def pv_at_yield(ytm):
+            pv = 0.0
+            for cf in cashflows:
+                # Parse ISO format date (YYYY-MM-DD)
+                iso_date = cf['date']
+                year, month, day = map(int, iso_date.split('-'))
+                cf_date = ql.Date(day, month, year)
+                t = day_count.yearFraction(evaluation_date, cf_date)
+                if t > 0:
+                    pv += cf['amount'] * math.exp(-ytm * t)
+            return pv
+    
+        def npv_objective(ytm):
+            return pv_at_yield(ytm) - current_pv
+    
+        # Newton-Raphson: search for ytm where npv_objective = 0
+        ytm_guess = 0.03  # Initial guess: 3%
+        for _ in range(100):
+            npv = npv_objective(ytm_guess)
+            if abs(npv) < 1e-6:
+                break
+            # Numerical derivative
+            epsilon = 1e-8
+            npv_plus = npv_objective(ytm_guess + epsilon)
+            derivative = (npv_plus - npv) / epsilon
+            if abs(derivative) < 1e-10:
+                break
+            ytm_guess = ytm_guess - npv / derivative
+            if ytm_guess < -0.5:
+                ytm_guess = -0.5  # Clamp to reasonable bounds
+            if ytm_guess > 1.0:
+                ytm_guess = 1.0
+    
+        return max(-0.5, min(1.0, ytm_guess))
+
+
     evaluation_date = spire.parse_date(note_data['evaluation_date'])
     note_curve_cfg, note_curve_name = spire.select_note_curve(note_data, curve_json)
     collateral_curve_cfg, collateral_curve_name = spire.select_collateral_curve(note_data, curve_json)
@@ -162,6 +210,9 @@ def price_index_linked_note(note_data, curve_json):
     lhs = note_leg['pv_note']
     rhs = collateral_leg['pv_collateral'] + pv_swap - adjustments['pv_total_adjustments']
     scale_to_pct = 100.0 / note_notional
+    
+    # Calculate YTM
+    ytm = calculate_yield_to_maturity(note_leg['cashflows'], evaluation_date, lhs)
 
     return {
         'evaluation_date': evaluation_date.ISO(),
@@ -179,8 +230,11 @@ def price_index_linked_note(note_data, curve_json):
         'identity_rhs_reconstructed': rhs,
         'identity_error': lhs - rhs,
         'contract_completeness': contract_completeness,
+            'yield_to_maturity': ytm,
         'price_pct': {
             'pv_note': lhs * scale_to_pct,
+                        'pv_note_coupons': note_leg['pv_note_coupons'] * scale_to_pct,
+                        'pv_note_redemption': note_leg['pv_note_redemption'] * scale_to_pct,
             'pv_collateral': collateral_leg['pv_collateral'] * scale_to_pct,
             'pv_collateral_model': collateral_leg['pv_collateral_model'] * scale_to_pct,
             'pv_swap': pv_swap * scale_to_pct,
@@ -215,6 +269,9 @@ def print_report(note_data, result):
     if completeness['missing_fields']:
         print(f"Missing contractual fields: {', '.join(completeness['missing_fields'])}")
     print(f"PV(Note) %: {pct['pv_note']:.6f}")
+    print(f"  - Coupons %: {pct['pv_note_coupons']:.6f}")
+    print(f"  - Redemption %: {pct['pv_note_redemption']:.6f}")
+    print(f"Yield to Maturity: {result['yield_to_maturity']:.6%}")
     print(f"PV(Collateral) %: {pct['pv_collateral']:.6f}")
     print(f"PV(Collateral model estimate) %: {pct['pv_collateral_model']:.6f}")
     print(f"Collateral valuation method: {result['collateral_valuation_method']}")

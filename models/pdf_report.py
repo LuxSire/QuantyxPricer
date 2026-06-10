@@ -122,6 +122,49 @@ def _build_report_lines(model_name: str, instrument_id: str, input_payload, outp
 
     lines.extend(_render_table('Pricing Output Summary', output_rows, key_header='Output', value_header='Value'))
 
+    # SPIRE-specific output expansion: include PV decomposition values in report
+    if model_name.lower() == 'spire' and isinstance(output_payload, dict):
+        price_pct = output_payload.get('price_pct', {})
+        spire_rows = []
+        # Prefer percentage-formatted outputs when available
+        def pct(key):
+            return price_pct.get(key) if key in price_pct else output_payload.get(key)
+
+        spire_rows.append(('PV(Note) %', pct('pv_note')))
+        spire_rows.append(('PV(Note) to_call %', pct('pv_note_to_call')))
+        spire_rows.append(('PV(Note) to_worst %', pct('pv_note_to_worst')))
+        spire_rows.append(('PV(Note) to_maturity %', pct('pv_note_to_maturity') or pct('pv_note')))
+        spire_rows.append(('PV(Collateral) %', pct('pv_collateral')))
+        spire_rows.append(('PV(Collateral model estimate) %', pct('pv_collateral_model')))
+        spire_rows.append(('Collateral valuation method', output_payload.get('collateral_valuation_method')))
+        spire_rows.append(('PV(Swap) %', pct('pv_swap') or output_payload.get('pv_swap')))
+
+        lines.extend(_render_table('SPIRE PV Breakdown', spire_rows, key_header='Output', value_header='Value'))
+
+    # index_linked-specific output expansion: include PV decomposition and YTM
+    if model_name.lower() == 'index_linked' and isinstance(output_payload, dict):
+        price_pct = output_payload.get('price_pct', {})
+        idx_rows = []
+        def pct(key):
+            return price_pct.get(key) if key in price_pct else output_payload.get(key)
+
+        idx_rows.append(('PV(Note) %', pct('pv_note') or output_payload.get('pv_note')))
+        idx_rows.append(('  - Coupons %', pct('pv_note_coupons') or output_payload.get('pv_note_coupons')))
+        idx_rows.append(('  - Redemption %', pct('pv_note_redemption') or output_payload.get('pv_note_redemption')))
+        idx_rows.append(('Yield to Maturity', output_payload.get('yield_to_maturity')))
+        idx_rows.append(('PV(Collateral) %', pct('pv_collateral') or output_payload.get('pv_collateral')))
+        idx_rows.append(('PV(Collateral model estimate) %', pct('pv_collateral_model') or output_payload.get('pv_collateral_model')))
+        idx_rows.append(('Collateral valuation method', output_payload.get('collateral_valuation_method')))
+        idx_rows.append(('PV(Swap) %', pct('pv_swap') or output_payload.get('pv_swap')))
+        # adjustments
+        idx_rows.append(('PV(Fees) %', pct('pv_fees') or (output_payload.get('pv_adjustments') or {}).get('pv_fees')))
+        idx_rows.append(('PV(Funding) %', pct('pv_funding') or (output_payload.get('pv_adjustments') or {}).get('pv_funding')))
+        idx_rows.append(('PV(CSA) %', pct('pv_csa') or (output_payload.get('pv_adjustments') or {}).get('pv_csa')))
+        idx_rows.append(('PV(Residual Basis) %', pct('pv_residual_basis') or (output_payload.get('pv_adjustments') or {}).get('pv_residual_basis')))
+        idx_rows.append(('PV(Adjustments Total) %', pct('pv_total_adjustments') or (output_payload.get('pv_adjustments') or {}).get('pv_total_adjustments')))
+
+        lines.extend(_render_table('Index-Linked PV Breakdown', idx_rows, key_header='Output', value_header='Value'))
+
     if extra_sections:
         for section_title, section_payload in extra_sections:
             lines.extend(['', section_title, '-' * len(section_title)])

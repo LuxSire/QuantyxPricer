@@ -1,5 +1,6 @@
 {
   "instrument_id": "XS1693822634",
+  "model": "hullwhite",
   "description": "ABN AMRO simplified price to first call",
   "evaluation_date": "08-06-2026",
   "issue_date": "04-10-2017",

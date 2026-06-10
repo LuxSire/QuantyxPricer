@@ -1,5 +1,6 @@
 {
   "instrument_id": "US023135DG82",
+  "model": "hullwhite",
   "description": "Amazon Sr Unsec American Callable Fixed Coupon (simplified assumptions)",
   "evaluation_date": "08-06-2026",
   "issue_date": "13-03-2020",

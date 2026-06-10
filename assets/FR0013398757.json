@@ -1,5 +1,6 @@
 {
   "instrument_id": "FR0013398757",
+  "model": "hullwhite",
   "description": "BNP Paribas Sub European Callable CMS Resettable (simplified assumptions)",
   "evaluation_date": "08-06-2026",
   "issue_date": "28-01-2019",
@@ -12,11 +13,18 @@
   "coupon_frequency": "Annual",
   "cms_coupon_frequency": "Annual",
   "cms_tenor_years": 10,
+  "cms_swap_curve_name": "EUR_CMS_10Y_SWAP",
   "cms_fixed_leg_frequency": "Annual",
   "cms_day_count": "Actual360",
   "cms_multiplier": 1.0,
   "cms_spread": 0.0,
   "cms_floor": 0.0,
+  "cms_vol_adjustment": {
+    "enabled": true,
+    "vol_surface_name": "EUR_SWPTN_VOL_SURFACE_PROXY",
+    "convexity_lambda": 1.0,
+    "callability_lambda": 0.05
+  },
   "par": 100.0,
   "credit_spread_bp": 15.0,
   "callable_type": "european",

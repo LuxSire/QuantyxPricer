@@ -1,4 +1,5 @@
 import argparse
+from datetime import date
 import json
 import math
 from pathlib import Path
@@ -6,11 +7,53 @@ from pathlib import Path
 import QuantLib as ql
 
 BASE_DIR = Path(__file__).resolve().parent
-CURVE_FILE = BASE_DIR / 'swap_curves.json'
-BOND_FILE = BASE_DIR / 'XS1693822634.json'
+PROJECT_ROOT = BASE_DIR.parent
+ASSETS_DIR = PROJECT_ROOT / 'assets'
+CURVES_DIR = PROJECT_ROOT / 'curves'
+CURVE_FILE = CURVES_DIR / 'swap_curves.json'
+BOND_FILE = ASSETS_DIR / 'XS1693822634.json'
+
+
+def today_date_string():
+    return date.today().strftime('%d-%m-%Y')
+
+
+def apply_runtime_pricing_defaults(data):
+    if isinstance(data, dict) and data.get('instrument_id'):
+        data = dict(data)
+        data['evaluation_date'] = today_date_string()
+    return data
+
+
+def resolve_json_path(path: Path):
+    if path.is_absolute():
+        return path
+
+    candidates = [
+        path,
+        PROJECT_ROOT / path,
+        ASSETS_DIR / path,
+        CURVES_DIR / path,
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    # If a bare filename is provided, prefer assets for bond JSON and curves for curve JSON.
+    if path.parent == Path('.'):
+        asset_candidate = ASSETS_DIR / path.name
+        if asset_candidate.exists():
+            return asset_candidate
+        curve_candidate = CURVES_DIR / path.name
+        if curve_candidate.exists():
+            return curve_candidate
+
+    return path
 
 
 def load_json(path: Path):
+    path = resolve_json_path(path)
     with open(path, 'r', encoding='utf-8-sig') as f:
         content = f.read().strip()
 
@@ -18,7 +61,7 @@ def load_json(path: Path):
         raise ValueError(f'JSON file is empty: {path}')
 
     try:
-        return json.loads(content)
+        return apply_runtime_pricing_defaults(json.loads(content))
     except json.JSONDecodeError as exc:
         raise ValueError(f'Invalid JSON in {path}: {exc}') from exc
 
@@ -171,13 +214,110 @@ def tenor_to_period(tenor: str):
     raise ValueError(f'Unsupported tenor format: {tenor}')
 
 
-def get_coupon_rate(curve, d0, d1, bond_data, eval_date):
+def tenor_to_years(tenor: str):
+    value = tenor.strip().upper()
+    if value == 'ON':
+        return 1.0 / 365.0
+    if value.endswith('D'):
+        return float(value[:-1]) / 365.0
+    if value.endswith('W'):
+        return float(value[:-1]) * 7.0 / 365.0
+    if value.endswith('M'):
+        return float(value[:-1]) / 12.0
+    if value.endswith('Y'):
+        return float(value[:-1])
+    raise ValueError(f'Unsupported tenor format: {tenor}')
+
+
+def select_named_curve_config(curve_json, curve_name):
+    if not curve_name:
+        return None
+    catalog = normalize_curve_catalog(curve_json)
+    if catalog is None:
+        raise ValueError('Named curve selection requires a curve catalog JSON list.')
+    if curve_name not in catalog:
+        raise ValueError(f'Requested curve not found in catalog: {curve_name}')
+    return catalog[curve_name]
+
+
+def interpolate_surface_vol(surface_cfg, target_expiry_years, target_tenor_years):
+    quotes = surface_cfg.get('quotes', [])
+    if not quotes:
+        return 0.0
+
+    parsed = []
+    for q in quotes:
+        expiry = tenor_to_years(q['expiry'])
+        tenor = tenor_to_years(q['tenor'])
+        vol = float(q['vol'])
+        parsed.append((expiry, tenor, vol))
+
+    if not parsed:
+        return 0.0
+
+    tenors = sorted(set(t for _, t, _ in parsed))
+    nearest_tenor = min(tenors, key=lambda x: abs(x - target_tenor_years))
+    slice_points = sorted((e, v) for e, t, v in parsed if t == nearest_tenor)
+    if not slice_points:
+        return 0.0
+
+    if target_expiry_years <= slice_points[0][0]:
+        return slice_points[0][1]
+    if target_expiry_years >= slice_points[-1][0]:
+        return slice_points[-1][1]
+
+    for i in range(1, len(slice_points)):
+        e0, v0 = slice_points[i - 1]
+        e1, v1 = slice_points[i]
+        if e0 <= target_expiry_years <= e1:
+            if e1 == e0:
+                return v1
+            w = (target_expiry_years - e0) / (e1 - e0)
+            return v0 + w * (v1 - v0)
+    return slice_points[-1][1]
+
+
+def build_cms_context(curve_json, bond_data, eval_date, default_curve):
+    if bond_data.get('coupon_structure', 'fixed') != 'cms_resettable':
+        return None
+
+    cms_curve = default_curve
+    cms_curve_name = bond_data.get('cms_swap_curve_name')
+    if cms_curve_name:
+        cms_curve_cfg = select_named_curve_config(curve_json, cms_curve_name)
+        if 'pillars' not in cms_curve_cfg:
+            raise ValueError(f'CMS curve {cms_curve_name} has no pillars.')
+        cms_curve = build_discount_curve(cms_curve_cfg, eval_date)
+
+    cms_vol_cfg = bond_data.get('cms_vol_adjustment', {})
+    vol_surface_cfg = None
+    if cms_vol_cfg.get('enabled', False):
+        vol_curve_name = cms_vol_cfg.get('vol_surface_name')
+        if not vol_curve_name:
+            raise ValueError('cms_vol_adjustment.enabled=true requires vol_surface_name.')
+        vol_surface_cfg = select_named_curve_config(curve_json, vol_curve_name)
+        if 'quotes' not in vol_surface_cfg:
+            raise ValueError(f'Vol surface {vol_curve_name} is missing quotes.')
+
+    return {
+        'cms_curve': cms_curve,
+        'vol_surface_cfg': vol_surface_cfg,
+    }
+
+
+def get_coupon_rate(curve, d0, d1, bond_data, eval_date, cms_context=None):
     structure = bond_data.get('coupon_structure', 'fixed')
 
     if structure == 'fixed':
         return bond_data['fixed_coupon_rate']
 
     if structure == 'cms_resettable':
+        cms_curve = curve
+        vol_surface_cfg = None
+        if cms_context is not None:
+            cms_curve = cms_context.get('cms_curve', curve)
+            vol_surface_cfg = cms_context.get('vol_surface_cfg')
+
         calendar = get_calendar(bond_data['calendar'])
         business_day_convention = get_business_day_convention(bond_data['business_day_convention'])
         cms_tenor_years = int(bond_data.get('cms_tenor_years', 10))
@@ -206,12 +346,32 @@ def get_coupon_rate(curve, d0, d1, bond_data, eval_date):
             f0 = fixed_schedule[i - 1]
             f1 = fixed_schedule[i]
             alpha = cms_day_count.yearFraction(f0, f1)
-            annuity += alpha * curve.discount(f1)
+            annuity += alpha * cms_curve.discount(f1)
 
         if annuity <= 0.0:
             cms_rate = 0.0
         else:
-            cms_rate = (curve.discount(reset_date) - curve.discount(swap_end)) / annuity
+            cms_rate = (cms_curve.discount(reset_date) - cms_curve.discount(swap_end)) / annuity
+
+        cms_vol_cfg = bond_data.get('cms_vol_adjustment', {})
+        if cms_vol_cfg.get('enabled', False) and vol_surface_cfg is not None:
+            expiry_years = max(1.0 / 12.0, ql.Actual365Fixed().yearFraction(eval_date, reset_date))
+            swap_tenor_years = float(cms_tenor_years)
+            atm_vol = interpolate_surface_vol(vol_surface_cfg, expiry_years, swap_tenor_years)
+            convexity_lambda = float(cms_vol_cfg.get('convexity_lambda', 1.0))
+            callability_lambda = float(cms_vol_cfg.get('callability_lambda', 0.0))
+
+            convexity_adj = 0.5 * convexity_lambda * (atm_vol ** 2) * expiry_years
+            callability_adj = 0.0
+
+            call_dates = [parse_date(x) for x in bond_data.get('call_dates', [])]
+            future_calls = [x for x in call_dates if x >= reset_date]
+            if future_calls and callability_lambda > 0.0:
+                next_call = min(future_calls)
+                tau_call = max(0.0, ql.Actual365Fixed().yearFraction(reset_date, next_call))
+                callability_adj = callability_lambda * atm_vol * math.sqrt(tau_call)
+
+            cms_rate = cms_rate + convexity_adj - callability_adj
 
         rate = bond_data.get('cms_multiplier', 1.0) * cms_rate + bond_data.get('cms_spread', 0.0)
         if 'cms_floor' in bond_data:
@@ -324,7 +484,7 @@ def build_coupon_schedule(bond_data):
     return schedule, maturity_date
 
 
-def price_to_call_date(curve, bond_data, call_date, schedule):
+def price_to_call_date(curve, bond_data, call_date, schedule, cms_context=None):
     eval_date = ql.Settings.instance().evaluationDate
     day_count = get_day_count(bond_data['accrual_day_count'])
     par = bond_data['par']
@@ -340,7 +500,7 @@ def price_to_call_date(curve, bond_data, call_date, schedule):
             break
 
         accrual = day_count.yearFraction(d0, d1)
-        coupon_rate = get_coupon_rate(curve, d0, d1, bond_data, eval_date)
+        coupon_rate = get_coupon_rate(curve, d0, d1, bond_data, eval_date, cms_context=cms_context)
         cf = par * coupon_rate * accrual
         t = day_count.yearFraction(eval_date, d1)
         if t < 0:
@@ -359,10 +519,13 @@ def price_to_call_date(curve, bond_data, call_date, schedule):
     return pv, redemption, cashflows
 
 
-def price_bond(curve, bond_data):
+def price_bond(curve, bond_data, curve_json=None):
     schedule, maturity_date = build_coupon_schedule(bond_data)
     eval_date = ql.Settings.instance().evaluationDate
     spread_bp = bond_data['credit_spread_bp']
+    cms_context = None
+    if curve_json is not None:
+        cms_context = build_cms_context(curve_json, bond_data, eval_date, curve)
     raw_call_dates = bond_data.get('call_dates', [])
 
     if raw_call_dates:
@@ -381,7 +544,7 @@ def price_bond(curve, bond_data):
 
     scenarios = []
     for call_date in eligible_call_dates:
-        npv, redemption, cashflows = price_to_call_date(curve, bond_data, call_date, schedule)
+        npv, redemption, cashflows = price_to_call_date(curve, bond_data, call_date, schedule, cms_context=cms_context)
         scenarios.append(
             {
                 'call_date': call_date.ISO(),
@@ -392,7 +555,7 @@ def price_bond(curve, bond_data):
         )
 
     maturity_npv, maturity_redemption, maturity_cashflows = price_to_call_date(
-        curve, bond_data, maturity_date, schedule
+        curve, bond_data, maturity_date, schedule, cms_context=cms_context
     )
     maturity_scenario = {
         'call_date': maturity_date.ISO(),
@@ -455,11 +618,11 @@ def pct_to_amount(value_pct, bond_data):
     return value_pct * par_amount / 100.0
 
 
-def implied_spread_bp(curve, bond_data, market_price, low_bp=-500.0, high_bp=3000.0, tol=1e-6, max_iter=120):
+def implied_spread_bp(curve, bond_data, market_price, curve_json=None, low_bp=-500.0, high_bp=3000.0, tol=1e-6, max_iter=120):
     def price_at(spread_bp):
         trial = dict(bond_data)
         trial['credit_spread_bp'] = spread_bp
-        trial_result = price_bond(curve, trial)
+        trial_result = price_bond(curve, trial, curve_json=curve_json)
         return get_model_price(trial_result)
 
     low_price = price_at(low_bp)
@@ -491,14 +654,14 @@ def implied_spread_bp(curve, bond_data, market_price, low_bp=-500.0, high_bp=300
     return 0.5 * (low_bp + high_bp)
 
 
-def price_with_spread_bp(curve, bond_data, spread_bp):
+def price_with_spread_bp(curve, bond_data, spread_bp, curve_json=None):
     trial = dict(bond_data)
     trial['credit_spread_bp'] = spread_bp
-    trial_result = price_bond(curve, trial)
+    trial_result = price_bond(curve, trial, curve_json=curve_json)
     return get_model_price(trial_result)
 
 
-def print_bond_result(bond_data, result, curve=None):
+def print_bond_result(bond_data, result, curve=None, curve_json=None):
     issue_price_pct = get_issue_price_pct(bond_data)
     selected_npv_pct = amount_to_pct(result['selected_npv'], bond_data)
     worst_npv_pct = amount_to_pct(result['npv_to_worst_call'], bond_data)
@@ -518,14 +681,24 @@ def print_bond_result(bond_data, result, curve=None):
     print(f"Spread: {result['spread_bp']:.1f} bp")
     print(f"Model - Issue (%): {selected_npv_pct - issue_price_pct:.6f}")
 
+    if bond_data.get('coupon_structure') == 'cms_resettable':
+        cms_curve_name = bond_data.get('cms_swap_curve_name', 'discount_curve_default')
+        cms_vol_cfg = bond_data.get('cms_vol_adjustment', {})
+        cms_vol_enabled = bool(cms_vol_cfg.get('enabled', False))
+        cms_vol_name = cms_vol_cfg.get('vol_surface_name', 'none')
+        print(f"CMS swap curve: {cms_curve_name}")
+        print(f"CMS vol adjustment enabled: {cms_vol_enabled}")
+        if cms_vol_enabled:
+            print(f"CMS vol surface: {cms_vol_name}")
+
     if 'market_price' in bond_data and curve is not None:
         market_price = float(bond_data['market_price'])
         market_price_amount = pct_to_amount(market_price, bond_data)
         model_price = get_model_price(result)
         model_price_pct = amount_to_pct(model_price, bond_data)
         diff_pct = model_price_pct - market_price
-        imp_spread = implied_spread_bp(curve, bond_data, market_price_amount)
-        fitted_price = price_with_spread_bp(curve, bond_data, imp_spread)
+        imp_spread = implied_spread_bp(curve, bond_data, market_price_amount, curve_json=curve_json)
+        fitted_price = price_with_spread_bp(curve, bond_data, imp_spread, curve_json=curve_json)
         fitted_price_pct = amount_to_pct(fitted_price, bond_data)
         print(f"Market price (%): {market_price:.6f}")
         print(f"Model - Market (%): {diff_pct:.6f}")
@@ -562,7 +735,7 @@ def get_bond_files(base_dir: Path):
 
 def run_all_bonds(curve_json, bond_files=None):
     if bond_files is None:
-        bond_files = get_bond_files(BASE_DIR)
+        bond_files = get_bond_files(ASSETS_DIR)
 
     results = []
     for bond_file in bond_files:
@@ -571,7 +744,7 @@ def run_all_bonds(curve_json, bond_files=None):
             evaluation_date = parse_date(bond_data['evaluation_date'])
             discount_curve_cfg = select_discount_curve_config(curve_json, bond_data)
             curve = build_discount_curve(discount_curve_cfg, evaluation_date)
-            result = price_bond(curve, bond_data)
+            result = price_bond(curve, bond_data, curve_json=curve_json)
         except Exception as exc:
             print_bond_skip(bond_file, exc)
             continue
@@ -595,7 +768,7 @@ def run_all_bonds(curve_json, bond_files=None):
                 'market_price': market_price,
                 'model_minus_market': diff,
                 'implied_spread_bp': (
-                    implied_spread_bp(curve, bond_data, pct_to_amount(float(market_price), bond_data))
+                    implied_spread_bp(curve, bond_data, pct_to_amount(float(market_price), bond_data), curve_json=curve_json)
                     if market_price is not None
                     else None
                 ),
@@ -630,23 +803,23 @@ if __name__ == '__main__':
     curve_json = load_json(Path(args.curve_file))
 
     if args.all_bonds:
-        bond_files = get_bond_files(BASE_DIR)
+        bond_files = get_bond_files(ASSETS_DIR)
         for bond_file in bond_files:
             try:
                 bond_data = load_json(bond_file)
                 evaluation_date = parse_date(bond_data['evaluation_date'])
                 discount_curve_cfg = select_discount_curve_config(curve_json, bond_data)
                 curve = build_discount_curve(discount_curve_cfg, evaluation_date)
-                result = price_bond(curve, bond_data)
+                result = price_bond(curve, bond_data, curve_json=curve_json)
             except Exception as exc:
                 print_bond_skip(bond_file, exc)
                 continue
-            print_bond_result(bond_data, result, curve)
+            print_bond_result(bond_data, result, curve, curve_json=curve_json)
         raise SystemExit(0)
 
     bond_data = load_json(Path(args.bond_file))
     evaluation_date = parse_date(bond_data['evaluation_date'])
     discount_curve_cfg = select_discount_curve_config(curve_json, bond_data)
     curve = build_discount_curve(discount_curve_cfg, evaluation_date)
-    result = price_bond(curve, bond_data)
-    print_bond_result(bond_data, result, curve)
+    result = price_bond(curve, bond_data, curve_json=curve_json)
+    print_bond_result(bond_data, result, curve, curve_json=curve_json)

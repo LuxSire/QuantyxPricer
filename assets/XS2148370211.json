@@ -1,5 +1,6 @@
 {
   "instrument_id": "XS2148370211",
+  "model": "hullwhite",
   "description": "Bank of America Sr Unsec Bermudan Callable Fixed to EUR_3M Float (simplified)",
   "evaluation_date": "08-06-2026",
   "issue_date": "31-03-2020",
@@ -10,7 +11,7 @@
   "business_day_convention": "ModifiedFollowing",
   "date_generation": "Forward",
   "par": 100.0,
-  "market_price": 100.87,
+  "market_price": 103.22,
   "credit_spread_bp": 55.0,
   "callable_type": "bermudan",
   "valuation_mode": "to_maturity",
@@ -27,7 +28,7 @@
     "30-09-2033"
   ],
   "coupon_structure": "fixed_to_float",
-  "fixed_coupon_rate": 0.0275,
+  "fixed_coupon_rate": 0.03648,
   "coupon_frequency": "Semiannual",
   "fixed_rate_end_date": "31-03-2029",
   "float_coupon_frequency": "Quarterly",

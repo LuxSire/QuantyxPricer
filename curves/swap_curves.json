@@ -79,6 +79,38 @@
     ]
   },
   {
+    "curve_name": "EUR_CMS_10Y_SWAP",
+    "as_of": "2026-06-08",
+    "day_count": "Actual365Fixed",
+    "calendar": "TARGET",
+    "compounding": "Semiannual",
+    "index": "EUR 10Y CMS / EUR 10Y IRS proxy",
+    "pillars": [
+      { "tenor": "1Y",  "rate": 0.02890, "source": "public proxy" },
+      { "tenor": "2Y",  "rate": 0.02940, "source": "public proxy" },
+      { "tenor": "3Y",  "rate": 0.02980, "source": "public proxy" },
+      { "tenor": "5Y",  "rate": 0.03020, "source": "public proxy" },
+      { "tenor": "7Y",  "rate": 0.03070, "source": "public proxy" },
+      { "tenor": "10Y", "rate": 0.03100, "source": "public 10Y EUR IRS proxy" },
+      { "tenor": "15Y", "rate": 0.03120, "source": "public proxy" },
+      { "tenor": "20Y", "rate": 0.03130, "source": "public proxy" }
+    ]
+  },
+  {
+    "curve_name": "EUR_SWPTN_VOL_SURFACE_PROXY",
+    "as_of": "2026-06-08",
+    "volatility_type": "lognormal",
+    "quote_type": "atm_normalized_proxy",
+    "quotes": [
+      { "expiry": "1Y",  "tenor": "10Y", "vol": 0.32, "source": "public proxy" },
+      { "expiry": "2Y",  "tenor": "10Y", "vol": 0.315, "source": "public proxy" },
+      { "expiry": "3Y",  "tenor": "10Y", "vol": 0.31, "source": "public proxy" },
+      { "expiry": "5Y",  "tenor": "10Y", "vol": 0.30, "source": "public proxy" },
+      { "expiry": "7Y",  "tenor": "10Y", "vol": 0.29, "source": "public proxy" },
+      { "expiry": "10Y", "tenor": "10Y", "vol": 0.275, "source": "public proxy" }
+    ]
+  },
+  {
     "curve_name": "EURUSD_FX_SPOT_AND_FORWARD_PROXY",
     "as_of": "2026-06-09",
     "base_currency": "EUR",
@@ -114,9 +146,9 @@
       { "tenor": "3Y",  "rate": -0.0018, "source": "public proxy" },
       { "tenor": "5Y",  "rate": -0.0022, "source": "public proxy" },
       { "tenor": "7Y",  "rate": -0.0025, "source": "public proxy" },
-      { "tenor": "10Y","rate": -0.0028, "source": "public proxy" },
-      { "tenor": "15Y","rate": -0.0030, "source": "public proxy" },
-      { "tenor": "20Y","rate": -0.0032, "source": "public proxy" }
+      { "tenor": "10Y", "rate": -0.0028, "source": "public proxy" },
+      { "tenor": "15Y", "rate": -0.0030, "source": "public proxy" },
+      { "tenor": "20Y", "rate": -0.0032, "source": "public proxy" }
     ]
   }
 ]

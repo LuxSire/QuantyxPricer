@@ -1,5 +1,6 @@
 {
   "instrument_id": "XS0316010023",
+  "model": "index_linked",
   "description": "Tranche G6 Secured Index Linked Notes due 2041 (extracted from multi-tranche prospectus)",
   "evaluation_date": "08-06-2026",
   "issue_date": "28-06-2007",
@@ -10,6 +11,37 @@
   "date_generation": "Forward",
   "coupon_structure": "index_linked",
   "fixed_coupon_rate": 0.0,
+  "index_linked_terms": {
+    "underlying_name": null,
+    "underlying_type": "channel_linked",
+    "reference_index_name": null,
+    "payoff_currency": "EUR",
+    "initial_reference_level": null,
+    "current_reference_level": null,
+    "pricing_formula_type": null,
+    "coupon_formula_type": null,
+    "coupon_participation": null,
+    "coupon_spread": null,
+    "coupon_floor": null,
+    "coupon_cap": null,
+    "redemption_formula_type": null,
+    "redemption_participation": null,
+    "redemption_floor_pct": null,
+    "redemption_cap_pct": null,
+    "principal_protection_pct": null,
+    "observation_dates": [],
+    "averaging_method": null,
+    "lookback_method": null,
+    "reset_lag_business_days": null,
+    "issuer_call_rights": null,
+    "investor_put_rights": null,
+    "barriers": []
+  },
+  "index_linked_assumption": {
+    "index_ratio_at_eval": 1.0,
+    "annual_index_growth_rate": 0.02,
+    "coupon_multiplier": 0.0
+  },
   "coupon_frequency": "Annual",
   "par": 100.0,
   "note_notional": 147000000.0,
@@ -44,5 +76,17 @@
     "csa_bp": 4.0,
     "residual_basis_bp": 9.0
   },
+  "missing_contractual_terms": [
+    "underlying_name",
+    "reference_index_name",
+    "initial_reference_level",
+    "current_reference_level",
+    "pricing_formula_type",
+    "coupon_formula_type",
+    "redemption_formula_type",
+    "principal_protection_pct",
+    "observation_dates",
+    "issuer_call_rights"
+  ],
   "source_note": "PDF is a long multi-tranche prospectus; only partial tranche-level terms were reliably extractable."
 }

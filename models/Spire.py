@@ -1,4 +1,5 @@
 import argparse
+from datetime import date
 import json
 import math
 from pathlib import Path
@@ -7,16 +8,57 @@ import QuantLib as ql
 
 
 BASE_DIR = Path(__file__).resolve().parent
-CURVE_FILE = BASE_DIR / 'swap_curves.json'
-BOND_FILE = BASE_DIR / 'XS2725067362.json'
+PROJECT_ROOT = BASE_DIR.parent
+ASSETS_DIR = PROJECT_ROOT / 'assets'
+CURVES_DIR = PROJECT_ROOT / 'curves'
+CURVE_FILE = CURVES_DIR / 'swap_curves.json'
+BOND_FILE = ASSETS_DIR / 'XS2725067362.json'
+
+
+def today_date_string():
+    return date.today().strftime('%d-%m-%Y')
+
+
+def apply_runtime_pricing_defaults(data):
+    if isinstance(data, dict) and data.get('instrument_id'):
+        data = dict(data)
+        data['evaluation_date'] = today_date_string()
+    return data
+
+
+def resolve_json_path(path: Path):
+    if path.is_absolute():
+        return path
+
+    candidates = [
+        path,
+        PROJECT_ROOT / path,
+        ASSETS_DIR / path,
+        CURVES_DIR / path,
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    if path.parent == Path('.'):
+        asset_candidate = ASSETS_DIR / path.name
+        if asset_candidate.exists():
+            return asset_candidate
+        curve_candidate = CURVES_DIR / path.name
+        if curve_candidate.exists():
+            return curve_candidate
+
+    return path
 
 
 def load_json(path: Path):
+    path = resolve_json_path(path)
     with open(path, 'r', encoding='utf-8-sig') as f:
         content = f.read().strip()
     if not content:
         raise ValueError(f'JSON file is empty: {path}')
-    return json.loads(content)
+    return apply_runtime_pricing_defaults(json.loads(content))
 
 
 def parse_date(date_str: str):
@@ -250,6 +292,14 @@ def discount_factor_with_issuer_spread(curve, day_count, evaluation_date, target
 def price_note(note_data, curve, curve_day_count):
     eval_date = ql.Settings.instance().evaluationDate
     note_day_count = get_day_count(note_data.get('accrual_day_count', '30/360'))
+    coupon_structure = note_data.get('coupon_structure', 'fixed')
+
+    if coupon_structure != 'fixed':
+        raise ValueError(
+            'Spire supports coupon_structure="fixed" only. '
+            f'Received coupon_structure="{coupon_structure}" for {note_data.get("instrument_id", "unknown")}. '
+            'Use models/hullwhite.py for CMS/floating structures.'
+        )
 
     notional = float(note_data.get('note_notional', 100000000.0))
     coupon_rate = float(note_data['fixed_coupon_rate'])

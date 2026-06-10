@@ -5,34 +5,19 @@ from pathlib import Path
 import numpy as np
 import QuantLib as ql
 
-try:
-    from models.hullwhite import (
-        BOND_FILE,
-        CURVE_FILE,
-        build_discount_curve,
-        get_bond_files,
-        get_business_day_convention,
-        get_calendar,
-        get_coupon_rate,
-        get_day_count,
-        get_frequency,
-        load_json,
-        parse_date,
-    )
-except ModuleNotFoundError:
-    from hullwhite import (
-        BOND_FILE,
-        CURVE_FILE,
-        build_discount_curve,
-        get_bond_files,
-        get_business_day_convention,
-        get_calendar,
-        get_coupon_rate,
-        get_day_count,
-        get_frequency,
-        load_json,
-        parse_date,
-    )
+from models.hullwhite import (
+    BOND_FILE,
+    CURVE_FILE,
+    build_discount_curve,
+    get_bond_files,
+    get_business_day_convention,
+    get_calendar,
+    get_coupon_rate,
+    get_day_count,
+    get_frequency,
+    load_json,
+    parse_date,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 

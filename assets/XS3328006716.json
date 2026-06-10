@@ -1,5 +1,6 @@
 {
   "instrument_id": "XS3328006716",
+  "currency": "EUR",
   "model": "spire",
   "description": "SPIRE Callable Fixed Rate Notes linked to Amazon.com Inc. due 2046 (Goldman termsheet)",
   "evaluation_date": "10-06-2026",
@@ -17,7 +18,7 @@
   "par": 100.0,
   "note_notional": 45000000.0,
   "issue_price": 100.0,
-  "credit_spread_bp": 20.0,
+  "credit_spread_bp": 110.0,
   "issuer_call": "Applicable",
   "callable_type": "european",
   "call_dates": [
@@ -32,6 +33,7 @@
     "issue_date": "13-03-2016",
     "maturity_date": "13-03-2046",
     "coupon_rate": 0.0565,
+    "collateral_spread": 110.0,
     "coupon_frequency": "Semiannual",
     "day_count": "30/360",
     "calendar": "TARGET",

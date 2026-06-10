@@ -6,6 +6,11 @@ from pathlib import Path
 
 import QuantLib as ql
 
+try:
+    from models import pdf_report
+except ModuleNotFoundError:
+    import pdf_report
+
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
@@ -306,49 +311,98 @@ def price_note(note_data, curve, curve_day_count):
     issuer_spread_bp = float(note_data.get('credit_spread_bp', 0.0))
 
     dates = build_note_dates(note_data)
-
-    pv_coupons = 0.0
-    pv_redemption = 0.0
-    cashflows = []
-
-    for i in range(1, len(dates)):
-        d0 = dates[i - 1]
-        d1 = dates[i]
-        accrual = note_day_count.yearFraction(d0, d1)
-        if d1 <= eval_date:
-            continue
-        coupon_cf = notional * coupon_rate * accrual
-        df = discount_factor_with_issuer_spread(curve, curve_day_count, eval_date, d1, issuer_spread_bp)
-        pv = coupon_cf * df
-        pv_coupons += pv
-        cashflows.append({'date': d1.ISO(), 'type': 'coupon', 'amount': coupon_cf, 'df': df, 'pv': pv})
-
     maturity_date = dates[-1]
-    if maturity_date > eval_date:
-        redemption_cf = notional
-        df_maturity = discount_factor_with_issuer_spread(
-            curve,
-            curve_day_count,
-            eval_date,
-            maturity_date,
-            issuer_spread_bp,
+
+    def pv_to_horizon(horizon_date, redemption_pct):
+        pv_coupons = 0.0
+        pv_redemption = 0.0
+        cashflows = []
+
+        for i in range(1, len(dates)):
+            d0 = dates[i - 1]
+            d1 = dates[i]
+            if d1 > horizon_date:
+                break
+            accrual = note_day_count.yearFraction(d0, d1)
+            if d1 <= eval_date:
+                continue
+            coupon_cf = notional * coupon_rate * accrual
+            df = discount_factor_with_issuer_spread(curve, curve_day_count, eval_date, d1, issuer_spread_bp)
+            pv = coupon_cf * df
+            pv_coupons += pv
+            cashflows.append({'date': d1.ISO(), 'type': 'coupon', 'amount': coupon_cf, 'df': df, 'pv': pv})
+
+        if horizon_date > eval_date:
+            redemption_cf = notional * redemption_pct / 100.0
+            df_horizon = discount_factor_with_issuer_spread(
+                curve,
+                curve_day_count,
+                eval_date,
+                horizon_date,
+                issuer_spread_bp,
+            )
+            pv_redemption = redemption_cf * df_horizon
+            cashflows.append(
+                {
+                    'date': horizon_date.ISO(),
+                    'type': 'redemption',
+                    'amount': redemption_cf,
+                    'df': df_horizon,
+                    'pv': pv_redemption,
+                }
+            )
+
+        return {
+            'horizon_date': horizon_date,
+            'pv_note': pv_coupons + pv_redemption,
+            'pv_note_coupons': pv_coupons,
+            'pv_note_redemption': pv_redemption,
+            'cashflows': cashflows,
+        }
+
+    raw_call_dates = note_data.get('call_dates', [])
+    issuer_call_applicable = str(note_data.get('issuer_call', '')).strip().lower() == 'applicable'
+    eligible_call_dates = []
+    if issuer_call_applicable and raw_call_dates:
+        eligible_call_dates = sorted(
+            d for d in [parse_date(x) for x in raw_call_dates]
+            if eval_date <= d < maturity_date
         )
-        pv_redemption = redemption_cf * df_maturity
-        cashflows.append(
-            {
-                'date': maturity_date.ISO(),
-                'type': 'redemption',
-                'amount': redemption_cf,
-                'df': df_maturity,
-                'pv': pv_redemption,
-            }
-        )
+
+    call_redemption_pct = float(note_data.get('issuer_call_redemption_amount_pct', 100.0))
+    maturity_redemption_amount = float(note_data.get('redemption', note_data.get('par', 100.0)))
+    par_amount = float(note_data.get('par', 100.0))
+    maturity_redemption_pct = 100.0 * maturity_redemption_amount / par_amount if par_amount else 100.0
+
+    call_scenarios = [pv_to_horizon(d, call_redemption_pct) for d in eligible_call_dates]
+    maturity_scenario = pv_to_horizon(maturity_date, maturity_redemption_pct)
+
+    valuation_mode = note_data.get('valuation_mode', 'to_maturity')
+    if valuation_mode == 'first_call' and call_scenarios:
+        selected = min(call_scenarios, key=lambda s: int(s['horizon_date'].serialNumber()))
+    elif valuation_mode == 'worst_call' and call_scenarios:
+        selected = min(call_scenarios, key=lambda s: s['pv_note'])
+    elif valuation_mode in {'to_maturity', 'first_call', 'worst_call'}:
+        selected = maturity_scenario
+    else:
+        raise ValueError(f'Unsupported valuation_mode: {valuation_mode}')
 
     return {
-        'pv_note': pv_coupons + pv_redemption,
-        'pv_note_coupons': pv_coupons,
-        'pv_note_redemption': pv_redemption,
-        'cashflows': cashflows,
+        'pv_note': selected['pv_note'],
+        'pv_note_coupons': selected['pv_note_coupons'],
+        'pv_note_redemption': selected['pv_note_redemption'],
+        'cashflows': selected['cashflows'],
+        'valuation_mode': valuation_mode,
+        'selected_call_date': selected['horizon_date'].ISO(),
+        'npv_to_first_call': (
+            min(call_scenarios, key=lambda s: int(s['horizon_date'].serialNumber()))['pv_note']
+            if call_scenarios else maturity_scenario['pv_note']
+        ),
+        'npv_to_worst_call': (
+            min(call_scenarios, key=lambda s: s['pv_note'])['pv_note']
+            if call_scenarios else maturity_scenario['pv_note']
+        ),
+        'npv_to_maturity': maturity_scenario['pv_note'],
     }
 
 
@@ -367,6 +421,9 @@ def model_collateral_pv(collateral_data, curve, curve_day_count):
     maturity_date = parse_date(collateral_data['maturity_date'])
     coupon_rate = float(collateral_data['coupon_rate'])
     principal = float(collateral_data['principal_amount'])
+    collateral_spread_bp = float(
+        collateral_data.get('collateral_spread_bp', collateral_data.get('collateral_spread', 0.0))
+    )
 
     schedule = build_regular_schedule(
         issue_date,
@@ -391,7 +448,13 @@ def model_collateral_pv(collateral_data, curve, curve_day_count):
         accrual = day_count.yearFraction(d0, d1)
         index_ratio = inflation_factor(eval_date, d1, inflation_assumption)
         coupon_cf = principal * coupon_rate * accrual * index_ratio
-        df = curve.discount(d1)
+        df = discount_factor_with_issuer_spread(
+            curve,
+            curve_day_count,
+            eval_date,
+            d1,
+            collateral_spread_bp,
+        )
         pv_cf = coupon_cf * df
         pv_model += pv_cf
         cashflows.append({'date': d1.ISO(), 'type': 'coupon', 'amount': coupon_cf, 'df': df, 'pv': pv_cf})
@@ -399,7 +462,13 @@ def model_collateral_pv(collateral_data, curve, curve_day_count):
     if maturity_date > eval_date:
         index_ratio_mat = inflation_factor(eval_date, maturity_date, inflation_assumption)
         redemption_cf = principal * index_ratio_mat
-        df_mat = curve.discount(maturity_date)
+        df_mat = discount_factor_with_issuer_spread(
+            curve,
+            curve_day_count,
+            eval_date,
+            maturity_date,
+            collateral_spread_bp,
+        )
         pv_red = redemption_cf * df_mat
         pv_model += pv_red
         cashflows.append({'date': maturity_date.ISO(), 'type': 'redemption', 'amount': redemption_cf, 'df': df_mat, 'pv': pv_red})
@@ -498,6 +567,9 @@ def price_spire_note(note_data, curve_json):
     # Convert all decomposition legs to percentage terms per 100 note notional.
     scale_to_pct = 100.0 / note_notional
     pv_note_pct = lhs * scale_to_pct
+    pv_note_to_call_pct = note_leg.get('npv_to_first_call', lhs) * scale_to_pct
+    pv_note_to_worst_pct = note_leg.get('npv_to_worst_call', lhs) * scale_to_pct
+    pv_note_to_maturity_pct = note_leg.get('npv_to_maturity', lhs) * scale_to_pct
     pv_collateral_pct = collateral_leg['pv_collateral'] * scale_to_pct
     pv_collateral_model_pct = collateral_leg['pv_collateral_model'] * scale_to_pct
     pv_swap_pct = pv_swap * scale_to_pct
@@ -513,6 +585,8 @@ def price_spire_note(note_data, curve_json):
         'evaluation_date': evaluation_date.ISO(),
         'note_discount_curve_name': note_curve_name,
         'collateral_discount_curve_name': collateral_curve_name,
+        'valuation_mode': note_leg.get('valuation_mode', note_data.get('valuation_mode', 'to_maturity')),
+        'selected_call_date': note_leg.get('selected_call_date', parse_date(note_data['maturity_date']).ISO()),
         'issue_price': issue_price,
         'note_notional': note_notional,
         'pv_note': note_leg['pv_note'],
@@ -524,8 +598,14 @@ def price_spire_note(note_data, curve_json):
         'identity_lhs_pv_note': lhs,
         'identity_rhs_reconstructed': rhs,
         'identity_error': lhs - rhs,
+        'npv_to_first_call': note_leg.get('npv_to_first_call', note_leg['pv_note']),
+        'npv_to_worst_call': note_leg.get('npv_to_worst_call', note_leg['pv_note']),
+        'npv_to_maturity': note_leg.get('npv_to_maturity', note_leg['pv_note']),
         'price_pct': {
             'pv_note': pv_note_pct,
+            'pv_note_to_call': pv_note_to_call_pct,
+            'pv_note_to_worst': pv_note_to_worst_pct,
+            'pv_note_to_maturity': pv_note_to_maturity_pct,
             'pv_collateral': pv_collateral_pct,
             'pv_collateral_model': pv_collateral_model_pct,
             'pv_swap': pv_swap_pct,
@@ -550,8 +630,13 @@ def print_report(note_data, result):
     print(f"Evaluation date: {result['evaluation_date']}")
     print(f"Note discount curve: {result['note_discount_curve_name']}")
     print(f"Collateral discount curve: {result['collateral_discount_curve_name']}")
+    print(f"Valuation mode: {result.get('valuation_mode', 'to_maturity')}")
+    print(f"Selected call date: {result.get('selected_call_date', 'N/A')}")
     print(f"Issue price (%): {result['issue_price']:.4f}")
     print(f"PV(Note) %: {pct['pv_note']:.6f}")
+    print(f"PV(Note) to_call %: {pct['pv_note_to_call']:.6f}")
+    print(f"PV(Note) to_worst %: {pct['pv_note_to_worst']:.6f}")
+    print(f"PV(Note) to_maturity %: {pct['pv_note_to_maturity']:.6f}")
     print(f"PV(Collateral) %: {pct['pv_collateral']:.6f}")
     print(f"PV(Collateral model estimate) %: {pct['pv_collateral_model']:.6f}")
     print(f"Collateral valuation method: {result['collateral_valuation_method']}")
@@ -579,3 +664,10 @@ if __name__ == '__main__':
     curve_json = load_json(Path(args.curve_file))
     result = price_spire_note(note_data, curve_json)
     print_report(note_data, result)
+    pdf_path = pdf_report.create_pdf_report(
+        model_name='spire',
+        instrument_id=note_data.get('instrument_id', 'unknown'),
+        input_payload=note_data,
+        output_payload=result,
+    )
+    print(f'PDF report: {pdf_path}')

@@ -1,10 +1,11 @@
 {
   "instrument_id": "XS1693822634",
+  "currency": "EUR",
   "model": "hullwhite",
-  "description": "ABN AMRO simplified price to first call",
+  "description": "ABN AMRO AT1 simplified price to first call",
   "evaluation_date": "08-06-2026",
   "issue_date": "04-10-2017",
-  "end_date": "22-09-2027",
+  "maturity_date": "31-12-2100",
   "calendar": "TARGET",
   "accrual_day_count": "Actual365Fixed",
   "business_day_convention": "Unadjusted",
@@ -12,5 +13,12 @@
   "date_generation": "Forward",
   "fixed_coupon_rate": 0.0475,
   "par": 100.0,
-  "credit_spread_bp": 20.0
+  "credit_spread_bp": 20.0,
+  "callable_type": "european",
+  "call_dates": [
+    "22-09-2027"
+  ],
+  "valuation_mode": "first_call",
+  "redemption": 100.0,
+  "call_price": 100.0
 }

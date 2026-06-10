@@ -6,6 +6,11 @@ from pathlib import Path
 
 import QuantLib as ql
 
+try:
+    from models import pdf_report
+except ModuleNotFoundError:
+    import pdf_report
+
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 ASSETS_DIR = PROJECT_ROOT / 'assets'
@@ -277,6 +282,161 @@ def interpolate_surface_vol(surface_cfg, target_expiry_years, target_tenor_years
     return slice_points[-1][1]
 
 
+def select_hw_vol_surface_config(curve_json, bond_data):
+    catalog = normalize_curve_catalog(curve_json)
+    if catalog is None:
+        return None, None
+
+    requested_name = (
+        bond_data.get('hw_vol_surface_name')
+        or bond_data.get('calibration_vol_surface_name')
+        or bond_data.get('cms_vol_adjustment', {}).get('vol_surface_name')
+    )
+    if requested_name:
+        cfg = catalog.get(requested_name)
+        if cfg is None:
+            raise ValueError(f'Requested HW vol surface not found in catalog: {requested_name}')
+        if 'quotes' not in cfg:
+            raise ValueError(f'HW vol surface {requested_name} is missing quotes.')
+        return cfg, requested_name
+
+    currency = str(
+        bond_data.get('currency')
+        or infer_currency_from_isin(bond_data.get('instrument_id'))
+        or 'EUR'
+    ).upper()
+
+    default_by_currency = {
+        'EUR': 'EUR_SWPTN_VOL_SURFACE_PROXY',
+    }
+    default_name = default_by_currency.get(currency)
+    if default_name and default_name in catalog and 'quotes' in catalog[default_name]:
+        return catalog[default_name], default_name
+
+    for name, cfg in catalog.items():
+        upper_name = name.upper()
+        if 'SWPTN' in upper_name and 'VOL' in upper_name and 'quotes' in cfg:
+            return cfg, name
+
+    return None, None
+
+
+def build_swap_index_for_calibration(currency, curve_handle):
+    ccy = str(currency or 'EUR').upper()
+    if ccy == 'USD':
+        return ql.USDLibor(ql.Period(3, ql.Months), curve_handle)
+    return ql.Euribor6M(curve_handle)
+
+
+def calibrate_hw_parameters(discount_curve, bond_data, vol_surface_cfg):
+    quotes = vol_surface_cfg.get('quotes', [])
+    if not quotes:
+        raise ValueError('Vol surface has no quotes for HW calibration.')
+
+    curve_handle = ql.YieldTermStructureHandle(discount_curve)
+    currency = bond_data.get('currency') or infer_currency_from_isin(bond_data.get('instrument_id')) or 'EUR'
+    index = build_swap_index_for_calibration(currency, curve_handle)
+
+    fixed_leg_tenor = ql.Period(1, ql.Years)
+    fixed_leg_day_count = ql.Thirty360(ql.Thirty360.BondBasis)
+    floating_leg_day_count = index.dayCounter()
+
+    helpers = []
+    for quote in quotes:
+        expiry = quote.get('expiry')
+        tenor = quote.get('tenor')
+        vol = float(quote.get('vol', 0.0))
+        if not expiry or not tenor or vol <= 0.0:
+            continue
+
+        maturity = tenor_to_period(expiry)
+        length = tenor_to_period(tenor)
+        vol_handle = ql.QuoteHandle(ql.SimpleQuote(vol))
+        helper = ql.SwaptionHelper(
+            maturity,
+            length,
+            vol_handle,
+            index,
+            fixed_leg_tenor,
+            fixed_leg_day_count,
+            floating_leg_day_count,
+            curve_handle,
+        )
+        helpers.append(helper)
+
+    if not helpers:
+        raise ValueError('No valid swaption helpers could be created from vol surface quotes.')
+
+    init_a = float(bond_data.get('hw_a', 0.03))
+    init_sigma = float(bond_data.get('hw_sigma', 0.01))
+
+    model = ql.HullWhite(curve_handle, init_a, init_sigma)
+    engine = ql.JamshidianSwaptionEngine(model)
+    for helper in helpers:
+        helper.setPricingEngine(engine)
+
+    method = ql.LevenbergMarquardt()
+    end_criteria = ql.EndCriteria(500, 250, 1e-8, 1e-8, 1e-8)
+    model.calibrate(helpers, method, end_criteria)
+
+    params = model.params()
+    calibrated_a = float(params[0])
+    calibrated_sigma = float(params[1])
+
+    sq_errors = []
+    for helper in helpers:
+        market = helper.marketValue()
+        model_value = helper.modelValue()
+        if market != 0.0:
+            err = (model_value - market) / market
+        else:
+            err = model_value - market
+        sq_errors.append(err * err)
+
+    rmse = math.sqrt(sum(sq_errors) / len(sq_errors)) if sq_errors else 0.0
+
+    return {
+        'a': calibrated_a,
+        'sigma': calibrated_sigma,
+        'rmse': rmse,
+        'num_helpers': len(helpers),
+    }
+
+
+def resolve_hw_parameters(curve, bond_data, curve_json):
+    params = {
+        'a': float(bond_data.get('hw_a', 0.03)),
+        'sigma': float(bond_data.get('hw_sigma', 0.01)),
+        'source': 'input',
+        'vol_surface_name': None,
+        'rmse': None,
+        'num_helpers': 0,
+        'error': None,
+    }
+
+    calibration_cfg = bond_data.get('hw_calibration', {})
+    calibration_enabled = bool(calibration_cfg.get('enabled', True))
+    if not calibration_enabled or curve_json is None:
+        return params
+
+    try:
+        vol_surface_cfg, vol_surface_name = select_hw_vol_surface_config(curve_json, bond_data)
+        if vol_surface_cfg is None:
+            return params
+
+        calibrated = calibrate_hw_parameters(curve, bond_data, vol_surface_cfg)
+        params['a'] = calibrated['a']
+        params['sigma'] = calibrated['sigma']
+        params['source'] = 'calibrated'
+        params['vol_surface_name'] = vol_surface_name
+        params['rmse'] = calibrated['rmse']
+        params['num_helpers'] = calibrated['num_helpers']
+        return params
+    except Exception as exc:
+        params['error'] = str(exc)
+        return params
+
+
 def build_cms_context(curve_json, bond_data, eval_date, default_curve):
     if bond_data.get('coupon_structure', 'fixed') != 'cms_resettable':
         return None
@@ -519,13 +679,106 @@ def price_to_call_date(curve, bond_data, call_date, schedule, cms_context=None):
     return pv, redemption, cashflows
 
 
-def price_bond(curve, bond_data, curve_json=None):
+def get_compounding_frequency_per_year(bond_data):
+    structure = bond_data.get('coupon_structure', 'fixed')
+    if structure == 'fixed_to_float':
+        frequency_name = bond_data.get('float_coupon_frequency', bond_data.get('coupon_frequency', 'Semiannual'))
+    elif structure == 'cms_resettable':
+        frequency_name = bond_data.get('cms_coupon_frequency', bond_data.get('coupon_frequency', 'Semiannual'))
+    else:
+        frequency_name = bond_data.get('coupon_frequency', 'Semiannual')
+
+    mapping = {
+        'Annual': 1,
+        'Semiannual': 2,
+        'Quarterly': 4,
+        'Monthly': 12,
+    }
+    return mapping.get(frequency_name, 2)
+
+
+def solve_ytm_from_cashflows(price_amount, cashflow_amounts, cashflow_times, freq_per_year):
+    if price_amount <= 0.0:
+        return None
+    if not cashflow_amounts or not cashflow_times:
+        return None
+
+    def pv_for_rate(rate):
+        base = 1.0 + rate / freq_per_year
+        if base <= 0.0:
+            return float('inf')
+        total = 0.0
+        for amt, t in zip(cashflow_amounts, cashflow_times):
+            total += amt / (base ** (freq_per_year * t))
+        return total
+
+    def objective(rate):
+        return pv_for_rate(rate) - price_amount
+
+    low = -0.95
+    high = 1.0
+    f_low = objective(low)
+    f_high = objective(high)
+
+    expand_count = 0
+    while f_low * f_high > 0.0 and expand_count < 30:
+        high += 0.5
+        f_high = objective(high)
+        expand_count += 1
+
+    if f_low * f_high > 0.0:
+        return None
+
+    for _ in range(120):
+        mid = 0.5 * (low + high)
+        f_mid = objective(mid)
+        if abs(f_mid) < 1e-10:
+            return mid
+        if f_low * f_mid <= 0.0:
+            high = mid
+            f_high = f_mid
+        else:
+            low = mid
+            f_low = f_mid
+    return 0.5 * (low + high)
+
+
+def compute_model_ytm_to_maturity(bond_data, maturity_scenario, maturity_date, eval_date):
+    day_count = get_day_count(bond_data['accrual_day_count'])
+    freq_per_year = get_compounding_frequency_per_year(bond_data)
+
+    amounts = []
+    times = []
+    for cf_date_iso, _, cf_amount, _, _ in maturity_scenario['cashflows']:
+        cf_date = ql.DateParser.parseISO(cf_date_iso)
+        t = day_count.yearFraction(eval_date, cf_date)
+        if t <= 0.0:
+            continue
+        amounts.append(float(cf_amount))
+        times.append(float(t))
+
+    redemption = float(bond_data.get('redemption', bond_data.get('par', 100.0)))
+    t_redemption = day_count.yearFraction(eval_date, maturity_date)
+    if t_redemption > 0.0:
+        amounts.append(redemption)
+        times.append(float(t_redemption))
+
+    return solve_ytm_from_cashflows(
+        price_amount=float(maturity_scenario['npv']),
+        cashflow_amounts=amounts,
+        cashflow_times=times,
+        freq_per_year=freq_per_year,
+    )
+
+
+def price_bond(curve, bond_data, curve_json=None, discount_curve_name=None):
     schedule, maturity_date = build_coupon_schedule(bond_data)
     eval_date = ql.Settings.instance().evaluationDate
     spread_bp = bond_data['credit_spread_bp']
     cms_context = None
     if curve_json is not None:
         cms_context = build_cms_context(curve_json, bond_data, eval_date, curve)
+    hw_params = resolve_hw_parameters(curve, bond_data, curve_json)
     raw_call_dates = bond_data.get('call_dates', [])
 
     if raw_call_dates:
@@ -564,6 +817,13 @@ def price_bond(curve, bond_data, curve_json=None):
         'cashflows': maturity_cashflows,
     }
 
+    model_ytm_to_maturity = compute_model_ytm_to_maturity(
+        bond_data,
+        maturity_scenario,
+        maturity_date,
+        eval_date,
+    )
+
     worst = min(scenarios, key=lambda x: x['npv'])
     first = min(scenarios, key=lambda x: x['call_date'])
 
@@ -586,13 +846,16 @@ def price_bond(curve, bond_data, curve_json=None):
         'selected_npv': selected['npv'],
         'valuation_mode': valuation_mode,
         'selected_call_date': selected['call_date'],
+        'discount_curve_name': discount_curve_name,
         'redemption_pv': selected['redemption_pv'],
         'spread_bp': spread_bp,
         'cashflows': selected['cashflows'],
         'npv_to_worst_call': worst['npv'],
         'npv_to_first_call': first['npv'],
         'npv_to_maturity': maturity_scenario['npv'],
+        'model_ytm_to_maturity': model_ytm_to_maturity,
         'scenarios': scenarios,
+        'hw_parameters': hw_params,
     }
 
 
@@ -672,14 +935,38 @@ def print_bond_result(bond_data, result, curve=None, curve_json=None):
     print(f"{bond_data['description']} ({bond_data['instrument_id']})")
     print(f"Valuation mode: {result['valuation_mode']}")
     print(f"Selected call date: {result['selected_call_date']}")
+    if result.get('discount_curve_name'):
+        print(f"Discount curve used: {result['discount_curve_name']}")
     print(f"Issue price (%): {issue_price_pct:.4f}")
     print(f"Selected price (%): {selected_npv_pct:.6f}")
-    print(f"Price (worst call) (%): {worst_npv_pct:.6f}")
-    print(f"Price (first call) (%): {first_npv_pct:.6f}")
-    print(f"Price (to maturity) (%): {maturity_npv_pct:.6f}")
+    print(f"Price to_worst (%): {worst_npv_pct:.6f}")
+    print(f"Price to_call (%): {first_npv_pct:.6f}")
+    print(f"Price to_maturity (%): {maturity_npv_pct:.6f}")
+    model_ytm_to_maturity = result.get('model_ytm_to_maturity')
+    if model_ytm_to_maturity is not None:
+        print(f"Model YTM (to maturity): {model_ytm_to_maturity * 100.0:.6f}%")
     print(f"Redemption PV (%): {redemption_pct:.6f}")
     print(f"Spread: {result['spread_bp']:.1f} bp")
+    hw_params = result.get('hw_parameters', {})
+    if hw_params:
+        print(
+            f"Hull-White params (a, sigma): {hw_params.get('a', 0.0):.6f}, "
+            f"{hw_params.get('sigma', 0.0):.6f} [{hw_params.get('source', 'input')}]"
+        )
+        if hw_params.get('vol_surface_name'):
+            print(f"HW calibration vol surface: {hw_params['vol_surface_name']}")
+        if hw_params.get('rmse') is not None:
+            print(f"HW calibration relative RMSE: {hw_params['rmse']:.8f}")
+        if hw_params.get('error'):
+            print(f"HW calibration fallback reason: {hw_params['error']}")
     print(f"Model - Issue (%): {selected_npv_pct - issue_price_pct:.6f}")
+
+    selected_cashflows = result.get('cashflows', [])
+    if selected_cashflows:
+        print('Coupons (selected path):')
+        for cashflow in selected_cashflows:
+            pay_date, coupon_rate, coupon_amount, _, _ = cashflow
+            print(f"  {pay_date}: coupon rate={coupon_rate * 100.0:.6f}% amount={coupon_amount:.6f}")
 
     if bond_data.get('coupon_structure') == 'cms_resettable':
         cms_curve_name = bond_data.get('cms_swap_curve_name', 'discount_curve_default')
@@ -744,7 +1031,12 @@ def run_all_bonds(curve_json, bond_files=None):
             evaluation_date = parse_date(bond_data['evaluation_date'])
             discount_curve_cfg = select_discount_curve_config(curve_json, bond_data)
             curve = build_discount_curve(discount_curve_cfg, evaluation_date)
-            result = price_bond(curve, bond_data, curve_json=curve_json)
+            result = price_bond(
+                curve,
+                bond_data,
+                curve_json=curve_json,
+                discount_curve_name=discount_curve_cfg.get('curve_name'),
+            )
         except Exception as exc:
             print_bond_skip(bond_file, exc)
             continue
@@ -810,7 +1102,12 @@ if __name__ == '__main__':
                 evaluation_date = parse_date(bond_data['evaluation_date'])
                 discount_curve_cfg = select_discount_curve_config(curve_json, bond_data)
                 curve = build_discount_curve(discount_curve_cfg, evaluation_date)
-                result = price_bond(curve, bond_data, curve_json=curve_json)
+                result = price_bond(
+                    curve,
+                    bond_data,
+                    curve_json=curve_json,
+                    discount_curve_name=discount_curve_cfg.get('curve_name'),
+                )
             except Exception as exc:
                 print_bond_skip(bond_file, exc)
                 continue
@@ -821,5 +1118,17 @@ if __name__ == '__main__':
     evaluation_date = parse_date(bond_data['evaluation_date'])
     discount_curve_cfg = select_discount_curve_config(curve_json, bond_data)
     curve = build_discount_curve(discount_curve_cfg, evaluation_date)
-    result = price_bond(curve, bond_data, curve_json=curve_json)
+    result = price_bond(
+        curve,
+        bond_data,
+        curve_json=curve_json,
+        discount_curve_name=discount_curve_cfg.get('curve_name'),
+    )
     print_bond_result(bond_data, result, curve, curve_json=curve_json)
+    pdf_path = pdf_report.create_pdf_report(
+        model_name='hullwhite',
+        instrument_id=bond_data.get('instrument_id', 'unknown'),
+        input_payload=bond_data,
+        output_payload=result,
+    )
+    print(f'PDF report: {pdf_path}')

@@ -1,5 +1,6 @@
 {
   "instrument_id": "XS0316010023",
+  "currency": "EUR",
   "model": "index_linked",
   "description": "Tranche G6 Secured Index Linked Notes due 2041 (extracted from multi-tranche prospectus)",
   "evaluation_date": "08-06-2026",

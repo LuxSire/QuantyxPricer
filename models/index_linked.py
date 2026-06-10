@@ -8,6 +8,11 @@ try:
 except ModuleNotFoundError:
     import Spire
 
+try:
+    from models import pdf_report
+except ModuleNotFoundError:
+    import pdf_report
+
 
 BASE_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = Spire.ASSETS_DIR
@@ -237,3 +242,10 @@ if __name__ == '__main__':
     curve_json = Spire.load_json(Path(args.curve_file))
     result = price_index_linked_note(note_data, curve_json)
     print_report(note_data, result)
+    pdf_path = pdf_report.create_pdf_report(
+        model_name='index_linked',
+        instrument_id=note_data.get('instrument_id', 'unknown'),
+        input_payload=note_data,
+        output_payload=result,
+    )
+    print(f'PDF report: {pdf_path}')

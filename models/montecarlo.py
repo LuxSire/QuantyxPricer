@@ -34,6 +34,11 @@ except ModuleNotFoundError:
         parse_date,
     )
 
+try:
+    from models import pdf_report
+except ModuleNotFoundError:
+    import pdf_report
+
 BASE_DIR = Path(__file__).resolve().parent
 
 
@@ -406,11 +411,25 @@ def main():
                 print_mc_skip(bond_data, exc)
                 continue
             print_mc_result(bond_data, result)
+            pdf_path = pdf_report.create_pdf_report(
+                model_name='montecarlo',
+                instrument_id=bond_data.get('instrument_id', 'unknown'),
+                input_payload=bond_data,
+                output_payload=result,
+            )
+            print(f'PDF report: {pdf_path}')
         return
 
     bond_data = apply_overrides(load_json(Path(args.bond_file)), args)
     result = price_bond_monte_carlo(curve_json, bond_data, issuer_spread_bp=args.issuer_spread_bp)
     print_mc_result(bond_data, result)
+    pdf_path = pdf_report.create_pdf_report(
+        model_name='montecarlo',
+        instrument_id=bond_data.get('instrument_id', 'unknown'),
+        input_payload=bond_data,
+        output_payload=result,
+    )
+    print(f'PDF report: {pdf_path}')
 
 
 if __name__ == '__main__':

@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from models import Spire, hullwhite, index_linked, montecarlo, trinomialtree
+from models import Spire, hullwhite, index_linked, montecarlo, pdf_report, trinomialtree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -29,6 +29,11 @@ def resolve_asset_path(path_like: str):
     path = Path(path_like)
     if path.is_absolute() and path.exists():
         return path
+
+    # Allow selecting by bare ISIN, e.g. --bond XS1693822634
+    if path.suffix == '':
+        path = Path(f'{path_like}.json')
+
     candidates = [
         path,
         PROJECT_ROOT / path,
@@ -55,6 +60,36 @@ def resolve_curve_path(path_like: str):
     return path
 
 
+def expected_isin_filename(bond_data):
+    instrument_id = str(bond_data.get('instrument_id', '')).strip()
+    if instrument_id:
+        return f'{instrument_id}.json'
+
+    isin = str(bond_data.get('isin', '')).strip()
+    if isin:
+        return f'{isin}.json'
+
+    return None
+
+
+def validate_asset_filenames_by_isin():
+    mismatches = []
+    for bond_file in sorted(ASSETS_DIR.glob('*.json')):
+        if bond_file.name.startswith('.'):
+            continue
+        bond_data = hullwhite.load_json(bond_file)
+        expected_name = expected_isin_filename(bond_data)
+        if expected_name and bond_file.name != expected_name:
+            mismatches.append((bond_file.name, expected_name))
+
+    if mismatches:
+        details = ', '.join([f'{actual} -> {expected}' for actual, expected in mismatches])
+        raise ValueError(
+            'Bond files in assets/ must be named with the ISIN (or instrument_id) as filename. '
+            f'Mismatches: {details}'
+        )
+
+
 def apply_mc_overrides(bond_data, args):
     data = dict(bond_data)
     if args.time_steps is not None:
@@ -68,6 +103,13 @@ def apply_mc_overrides(bond_data, args):
 
 def dispatch_one(bond_file: Path, curve_json, args):
     bond_data = hullwhite.load_json(bond_file)
+
+    expected_name = expected_isin_filename(bond_data)
+    if expected_name and bond_file.name != expected_name:
+        raise ValueError(
+            f'Bond file name must match ISIN/instrument_id. Got {bond_file.name}, expected {expected_name}.'
+        )
+
     model_name = str(bond_data.get('model', '')).strip().lower()
     if not model_name:
         raise ValueError(f'Missing model field in {bond_file.name}. Add model in bond JSON.')
@@ -76,18 +118,47 @@ def dispatch_one(bond_file: Path, curve_json, args):
         evaluation_date = hullwhite.parse_date(bond_data['evaluation_date'])
         discount_curve_cfg = hullwhite.select_discount_curve_config(curve_json, bond_data)
         curve = hullwhite.build_discount_curve(discount_curve_cfg, evaluation_date)
-        result = hullwhite.price_bond(curve, bond_data, curve_json=curve_json)
+        result = hullwhite.price_bond(
+            curve,
+            bond_data,
+            curve_json=curve_json,
+            discount_curve_name=discount_curve_cfg.get('curve_name'),
+        )
         hullwhite.print_bond_result(bond_data, result, curve, curve_json=curve_json)
+        pdf_path = pdf_report.create_pdf_report(
+            model_name='hullwhite',
+            instrument_id=bond_data.get('instrument_id', 'unknown'),
+            input_payload=bond_data,
+            output_payload=result,
+        )
+        print(f'PDF report: {pdf_path}')
+        print()
         return
 
     if model_name == 'spire':
         result = Spire.price_spire_note(bond_data, curve_json)
         Spire.print_report(bond_data, result)
+        pdf_path = pdf_report.create_pdf_report(
+            model_name='spire',
+            instrument_id=bond_data.get('instrument_id', 'unknown'),
+            input_payload=bond_data,
+            output_payload=result,
+        )
+        print(f'PDF report: {pdf_path}')
+        print()
         return
 
     if model_name == 'index_linked':
         result = index_linked.price_index_linked_note(bond_data, curve_json)
         index_linked.print_report(bond_data, result)
+        pdf_path = pdf_report.create_pdf_report(
+            model_name='index_linked',
+            instrument_id=bond_data.get('instrument_id', 'unknown'),
+            input_payload=bond_data,
+            output_payload=result,
+        )
+        print(f'PDF report: {pdf_path}')
+        print()
         return
 
     if model_name == 'trinomialtree':
@@ -96,12 +167,28 @@ def dispatch_one(bond_file: Path, curve_json, args):
             data['tree_time_steps'] = args.tree_steps
         result = trinomialtree.price_callable_bond_tree(curve_json, data, issuer_spread_bp=args.issuer_spread_bp)
         trinomialtree.print_tree_result(data, result)
+        pdf_path = pdf_report.create_pdf_report(
+            model_name='trinomialtree',
+            instrument_id=data.get('instrument_id', 'unknown'),
+            input_payload=data,
+            output_payload=result,
+        )
+        print(f'PDF report: {pdf_path}')
+        print()
         return
 
     if model_name == 'montecarlo':
         data = apply_mc_overrides(bond_data, args)
         result = montecarlo.price_bond_monte_carlo(curve_json, data, issuer_spread_bp=args.issuer_spread_bp)
         montecarlo.print_mc_result(data, result)
+        pdf_path = pdf_report.create_pdf_report(
+            model_name='montecarlo',
+            instrument_id=data.get('instrument_id', 'unknown'),
+            input_payload=data,
+            output_payload=result,
+        )
+        print(f'PDF report: {pdf_path}')
+        print()
         return
 
     raise ValueError(
@@ -124,6 +211,7 @@ def run_all_bonds(curve_json, args):
 
 def main():
     args = parse_args()
+    validate_asset_filenames_by_isin()
     curve_file = resolve_curve_path(args.curve_file)
     curve_json = hullwhite.load_json(curve_file)
 

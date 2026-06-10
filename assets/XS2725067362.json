@@ -1,5 +1,6 @@
 {
   "instrument_id": "XS2725067362",
+  "currency": "EUR",
   "model": "spire",
   "description": "SPIRE EUR 100mm Fixed Rate Secured Notes due 2041 (from termsheet)",
   "evaluation_date": "08-06-2026",
@@ -29,6 +30,7 @@
     "issue_date": "15-09-2011",
     "maturity_date": "15-09-2041",
     "coupon_rate": 0.0255,
+    "collateral_spread": 180.0,
     "coupon_frequency": "Semiannual",
     "day_count": "ActualActual",
     "calendar": "TARGET",

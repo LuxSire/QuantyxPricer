@@ -36,6 +36,11 @@ except ModuleNotFoundError:
         select_discount_curve_config,
     )
 
+try:
+    from models import pdf_report
+except ModuleNotFoundError:
+    import pdf_report
+
 BASE_DIR = Path(__file__).resolve().parent
 
 
@@ -246,6 +251,13 @@ if __name__ == '__main__':
                 print_tree_skip(bond_data, exc)
                 continue
             print_tree_result(bond_data, result)
+            pdf_path = pdf_report.create_pdf_report(
+                model_name='trinomialtree',
+                instrument_id=bond_data.get('instrument_id', 'unknown'),
+                input_payload=bond_data,
+                output_payload=result,
+            )
+            print(f'PDF report: {pdf_path}')
         raise SystemExit(0)
 
     bond_data = load_json(Path(args.bond_file))
@@ -255,3 +267,10 @@ if __name__ == '__main__':
 
     result = price_callable_bond_tree(curve_json, bond_data, issuer_spread_bp=args.issuer_spread_bp)
     print_tree_result(bond_data, result)
+    pdf_path = pdf_report.create_pdf_report(
+        model_name='trinomialtree',
+        instrument_id=bond_data.get('instrument_id', 'unknown'),
+        input_payload=bond_data,
+        output_payload=result,
+    )
+    print(f'PDF report: {pdf_path}')

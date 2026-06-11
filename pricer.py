@@ -1,7 +1,12 @@
 import argparse
 from pathlib import Path
 
-from models import hullwhite, index_linked, montecarlo, pdf_report, spire, trinomialtree
+from models import hullwhite, index_linked, montecarlo, spire, trinomialtree
+try:
+    from reporting import pdf_report, json_report
+except ModuleNotFoundError:
+    import reporting.pdf_report as pdf_report
+    import reporting.json_report as json_report
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -133,7 +138,13 @@ def dispatch_one(bond_file: Path, curve_json, args):
         )
         print(f'PDF report: {pdf_path}')
         print()
-        return
+        return {
+            'bond_file': bond_file.name,
+            'instrument_id': bond_data.get('instrument_id'),
+            'model': model_name,
+            'pdf': str(pdf_path),
+            'result': result,
+        }
 
     if model_name == 'spire':
         result = spire.price_spire_note(bond_data, curve_json)
@@ -146,7 +157,13 @@ def dispatch_one(bond_file: Path, curve_json, args):
         )
         print(f'PDF report: {pdf_path}')
         print()
-        return
+        return {
+            'bond_file': bond_file.name,
+            'instrument_id': bond_data.get('instrument_id'),
+            'model': model_name,
+            'pdf': str(pdf_path),
+            'result': result,
+        }
 
     if model_name == 'index_linked':
         result = index_linked.price_index_linked_note(bond_data, curve_json)
@@ -159,7 +176,13 @@ def dispatch_one(bond_file: Path, curve_json, args):
         )
         print(f'PDF report: {pdf_path}')
         print()
-        return
+        return {
+            'bond_file': bond_file.name,
+            'instrument_id': bond_data.get('instrument_id'),
+            'model': model_name,
+            'pdf': str(pdf_path),
+            'result': result,
+        }
 
     if model_name == 'trinomialtree':
         data = dict(bond_data)
@@ -175,7 +198,13 @@ def dispatch_one(bond_file: Path, curve_json, args):
         )
         print(f'PDF report: {pdf_path}')
         print()
-        return
+        return {
+            'bond_file': bond_file.name,
+            'instrument_id': data.get('instrument_id'),
+            'model': model_name,
+            'pdf': str(pdf_path),
+            'result': result,
+        }
 
     if model_name == 'montecarlo':
         data = apply_mc_overrides(bond_data, args)
@@ -189,7 +218,13 @@ def dispatch_one(bond_file: Path, curve_json, args):
         )
         print(f'PDF report: {pdf_path}')
         print()
-        return
+        return {
+            'bond_file': bond_file.name,
+            'instrument_id': data.get('instrument_id'),
+            'model': model_name,
+            'pdf': str(pdf_path),
+            'result': result,
+        }
 
     raise ValueError(
         f'Unsupported model="{model_name}" in {bond_file.name}. '
@@ -198,15 +233,22 @@ def dispatch_one(bond_file: Path, curve_json, args):
 
 
 def run_all_bonds(curve_json, args):
+    collected = []
     for bond_file in sorted(ASSETS_DIR.glob('*.json')):
         if bond_file.name.startswith('.'):
             continue
         try:
-            dispatch_one(bond_file, curve_json, args)
+            result_entry = dispatch_one(bond_file, curve_json, args)
+            if result_entry is not None:
+                collected.append(result_entry)
         except Exception as exc:
             print(f'{bond_file.name}')
             print(f'Skipped: {exc}')
             print()
+
+    if collected:
+        out_path = json_report.create_json_report(collected)
+        print(f'JSON summary: {out_path}')
 
 
 def main():

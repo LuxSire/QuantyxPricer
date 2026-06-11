@@ -5,11 +5,12 @@ import math
 from pathlib import Path
 
 import QuantLib as ql
+import random
 
 try:
-    from models import pdf_report
+    from reporting import pdf_report
 except ModuleNotFoundError:
-    import pdf_report
+    import reporting.pdf_report as pdf_report
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -275,10 +276,14 @@ def build_note_dates(note_data):
             current = next_date
         return dates
 
+    freq = note_data.get('coupon_frequency', 'Annual')
+    if freq is None or str(freq).strip().lower() in {'none', 'null', ''}:
+        return [issue_date, maturity_date]
+
     schedule = build_regular_schedule(
         issue_date,
         maturity_date,
-        note_data.get('coupon_frequency', 'Annual'),
+        freq,
         note_data.get('calendar', 'TARGET'),
         note_data.get('business_day_convention', 'Following'),
     )
@@ -294,14 +299,14 @@ def discount_factor_with_issuer_spread(curve, day_count, evaluation_date, target
     return base_df * spread_df
 
 
-def price_note(note_data, curve, curve_day_count):
+def price_note(note_data, curve, curve_day_count, collateral_curve=None, collateral_curve_day_count=None):
     eval_date = ql.Settings.instance().evaluationDate
     note_day_count = get_day_count(note_data.get('accrual_day_count', '30/360'))
     coupon_structure = note_data.get('coupon_structure', 'fixed')
 
-    if coupon_structure != 'fixed':
+    if coupon_structure not in {'fixed', 'zero_coupon'}:
         raise ValueError(
-            'Spire supports coupon_structure="fixed" only. '
+            'Spire supports coupon_structure="fixed" or "zero_coupon" only. '
             f'Received coupon_structure="{coupon_structure}" for {note_data.get("instrument_id", "unknown")}. '
             'Use models/hullwhite.py for CMS/floating structures.'
         )
@@ -310,6 +315,7 @@ def price_note(note_data, curve, curve_day_count):
     coupon_rate = float(note_data['fixed_coupon_rate'])
     issuer_spread_bp = float(note_data.get('credit_spread_bp', 0.0))
 
+    # Build note dates; for zero_coupon the builder will return only issue and maturity
     dates = build_note_dates(note_data)
     maturity_date = dates[-1]
 
@@ -369,20 +375,154 @@ def price_note(note_data, curve, curve_day_count):
             if eval_date <= d < maturity_date
         )
 
+    callable_type = note_data.get('callable_type', '').strip().lower()
+    autocall_trigger = note_data.get('autocall_trigger', {}) or {}
+
+    def estimate_forward_dirty_price(collateral_data, collateral_curve, collateral_day_count, call_date, eval_date):
+        # Estimate forward dirty price (%) of collateral at call_date using model cashflows
+        issue = parse_date(collateral_data['issue_date'])
+        mat = parse_date(collateral_data['maturity_date'])
+        principal = float(collateral_data.get('principal_amount', collateral_data.get('principal', 0.0)))
+
+        # Build schedule for collateral same as model_collateral_pv
+        schedule = build_regular_schedule(
+            issue,
+            mat,
+            collateral_data.get('coupon_frequency', 'Semiannual'),
+            collateral_data.get('calendar', 'TARGET'),
+            collateral_data.get('business_day_convention', 'Following'),
+        )
+
+        day_count = get_day_count(collateral_data.get('day_count', 'ActualActual'))
+        inflation_assumption = collateral_data.get('inflation_assumption', {})
+
+        df_call = collateral_curve.discount(call_date)
+        sum_fwd = 0.0
+        for i in range(1, len(schedule)):
+            d1 = schedule[i]
+            if d1 < call_date:
+                continue
+            # coupon or redemption amount at d1
+            accrual = day_count.yearFraction(schedule[i - 1], d1)
+            index_ratio = inflation_factor(eval_date, d1, inflation_assumption)
+            coupon_rate = float(collateral_data.get('coupon_rate', 0.0))
+            coupon_cf = principal * coupon_rate * accrual * index_ratio
+            redemption_cf = 0.0
+            if d1 == mat:
+                redemption_cf = principal * index_ratio
+
+            cf = coupon_cf + redemption_cf
+            df_t = collateral_curve.discount(d1)
+            # forward price contribution discounted to call_date
+            if df_call > 0:
+                sum_fwd += cf * (df_t / df_call)
+
+        # forward dirty price as percent of principal
+        if principal <= 0:
+            return 0.0
+        return 100.0 * (sum_fwd / principal)
+
+
+    def monte_carlo_call_probability(mean_pct, vol, eval_date, call_date, trigger_level_pct, paths=1000):
+        # mean_pct and trigger_level_pct are percentages (e.g., 71.3)
+        if mean_pct is None:
+            return 0.0
+        T = ql.Actual365Fixed().yearFraction(eval_date, call_date)
+        if T <= 0:
+            return 1.0 if mean_pct >= (trigger_level_pct or 0.0) else 0.0
+        mean_dec = max(mean_pct / 100.0, 1e-9)
+        sigma = float(vol) * math.sqrt(T)
+        mu = math.log(mean_dec) - 0.5 * sigma * sigma
+        count = 0
+        for _ in range(int(paths)):
+            sample = math.exp(random.gauss(mu, sigma))
+            sample_pct = sample * 100.0
+            if trigger_level_pct is not None and sample_pct >= float(trigger_level_pct):
+                count += 1
+        return float(count) / float(paths)
+
     call_redemption_pct = float(note_data.get('issuer_call_redemption_amount_pct', 100.0))
     maturity_redemption_amount = float(note_data.get('redemption', note_data.get('par', 100.0)))
     par_amount = float(note_data.get('par', 100.0))
     maturity_redemption_pct = 100.0 * maturity_redemption_amount / par_amount if par_amount else 100.0
 
-    call_scenarios = [pv_to_horizon(d, call_redemption_pct) for d in eligible_call_dates]
+    # Build call scenarios, evaluating autocall triggers when specified
+    call_scenarios = []
+    for d in eligible_call_dates:
+        sc = pv_to_horizon(d, call_redemption_pct)
+        sc['horizon_date'] = d
+        sc['triggered'] = None
+        # If autocall trigger defined and collateral curve available, evaluate forward dirty price
+        if callable_type == 'autocall_forward_dirty' and autocall_trigger and collateral_curve is not None:
+            trigger_level = autocall_trigger.get('trigger_level_pct') or autocall_trigger.get('trigger_level')
+            if trigger_level is not None:
+                try:
+                    fd = estimate_forward_dirty_price(note_data.get('collateral', {}), collateral_curve, collateral_curve_day_count, d, eval_date)
+                except Exception:
+                    fd = None
+                sc['forward_dirty_pct'] = fd
+                sc['triggered'] = (fd is not None and fd >= float(trigger_level))
+            else:
+                # No explicit trigger level: compute forward_dirty_pct for informational use
+                try:
+                    fd = estimate_forward_dirty_price(note_data.get('collateral', {}), collateral_curve, collateral_curve_day_count, d, eval_date)
+                except Exception:
+                    fd = None
+                sc['forward_dirty_pct'] = fd
+                sc['triggered'] = None
+        call_scenarios.append(sc)
+
     maturity_scenario = pv_to_horizon(maturity_date, maturity_redemption_pct)
 
     valuation_mode = note_data.get('valuation_mode', 'to_maturity')
-    if valuation_mode == 'first_call' and call_scenarios:
+    # If trigger level absent but Monte Carlo params provided, compute probabilistic call
+    monte_info = None
+    if callable_type == 'autocall_forward_dirty' and call_scenarios and autocall_trigger:
+        trigger_level = autocall_trigger.get('trigger_level_pct') or autocall_trigger.get('trigger_level')
+        monte_paths = autocall_trigger.get('monte_carlo_paths')
+        monte_vol = autocall_trigger.get('monte_carlo_vol')
+        if trigger_level is None and monte_paths and monte_vol is not None:
+            # For simplicity handle single-call-date case: compute probability of call at earliest call date
+            sc = min(call_scenarios, key=lambda s: int(s['horizon_date'].serialNumber()))
+            fd_mean = sc.get('forward_dirty_pct')
+            # default trigger candidate: use collateral market dirty price if available
+            trigger_candidate = note_data.get('collateral', {}).get('market_dirty_price')
+            p_call = monte_carlo_call_probability(fd_mean, monte_vol, eval_date, sc['horizon_date'], trigger_candidate, paths=monte_paths)
+            monte_info = {
+                'monte_paths': int(monte_paths),
+                'monte_vol': float(monte_vol),
+                'trigger_level_used_pct': trigger_candidate,
+                'p_call': p_call,
+                'call_date': sc['horizon_date'].ISO(),
+                'fd_mean_pct': fd_mean,
+            }
+            # expected PV under simple two-outcome: call vs maturity
+            expected_pv = p_call * sc['pv_note'] + (1.0 - p_call) * maturity_scenario['pv_note']
+            # set selected to expected result
+            selected = {
+                'pv_note': expected_pv,
+                'pv_note_coupons': sc.get('pv_note_coupons', 0.0) * p_call + maturity_scenario.get('pv_note_coupons', 0.0) * (1 - p_call),
+                'pv_note_redemption': sc.get('pv_note_redemption', 0.0) * p_call + maturity_scenario.get('pv_note_redemption', 0.0) * (1 - p_call),
+                'cashflows': sc.get('cashflows', []) if p_call >= 0.5 else maturity_scenario.get('cashflows', []),
+                'horizon_date': sc['horizon_date'],
+            }
+
+    if 'selected' in locals() and selected is not None:
+        # monte-selected already computed above
+        pass
+    elif valuation_mode == 'first_call' and call_scenarios:
         selected = min(call_scenarios, key=lambda s: int(s['horizon_date'].serialNumber()))
     elif valuation_mode == 'worst_call' and call_scenarios:
         selected = min(call_scenarios, key=lambda s: s['pv_note'])
-    elif valuation_mode in {'to_maturity', 'first_call', 'worst_call'}:
+    elif valuation_mode == 'call_and_maturity' and call_scenarios:
+        # If any call scenario was deterministically triggered, select the earliest triggered call
+        triggered_calls = [s for s in call_scenarios if s.get('triggered')]
+        if triggered_calls:
+            selected = min(triggered_calls, key=lambda s: int(s['horizon_date'].serialNumber()))
+        else:
+            # No deterministic trigger: fall back to maturity
+            selected = maturity_scenario
+    elif valuation_mode in {'to_maturity'}:
         selected = maturity_scenario
     else:
         raise ValueError(f'Unsupported valuation_mode: {valuation_mode}')
@@ -403,6 +543,18 @@ def price_note(note_data, curve, curve_day_count):
             if call_scenarios else maturity_scenario['pv_note']
         ),
         'npv_to_maturity': maturity_scenario['pv_note'],
+        'monte_info': monte_info,
+        'call_scenarios': [
+            {
+                'horizon_date': s['horizon_date'].ISO(),
+                'pv_note': s['pv_note'],
+                'pv_note_coupons': s.get('pv_note_coupons', 0.0),
+                'pv_note_redemption': s.get('pv_note_redemption', 0.0),
+                'triggered': s.get('triggered'),
+                'forward_dirty_pct': s.get('forward_dirty_pct'),
+            }
+            for s in call_scenarios
+        ],
     }
 
 
@@ -581,14 +733,20 @@ def price_spire_note(note_data, curve_json):
     note_notional = float(note_data.get('note_notional', 100000000.0))
     issue_price = float(note_data.get('issue_price', 100.0))
 
-    note_leg = price_note(note_data, note_curve, note_curve_day_count)
+    note_leg = price_note(note_data, note_curve, note_curve_day_count, collateral_curve=collateral_curve, collateral_curve_day_count=collateral_curve_day_count)
     collateral_leg = model_collateral_pv(note_data['collateral'], collateral_curve, collateral_curve_day_count)
     adjustments = compute_valuation_adjustments(note_data, note_curve, note_curve_day_count)
 
     swap_cfg = note_data.get('swap', {})
     swap_mode = swap_cfg.get('mode', 'calibration_residual')
 
-    if swap_mode == 'calibration_residual':
+    # If collateral is repo-financed, prefer repo purchase price for collateral PV
+    collateral_repo = note_data.get('collateral_repo', {}) or {}
+    if collateral_repo.get('is_repo_financed') and collateral_repo.get('repo_purchase_price_pct') is not None:
+        principal = float(note_data.get('collateral', {}).get('principal_amount', note_notional))
+        collateral_leg['pv_collateral'] = principal * float(collateral_repo.get('repo_purchase_price_pct')) / 100.0
+
+    if swap_mode in {'calibration_residual', 'explicit_cashflows'}:
         pv_swap = (
             note_leg['pv_note']
             - collateral_leg['pv_collateral']
@@ -685,6 +843,12 @@ def print_report(note_data, result):
     print(f"Check LHS PV(Note) %: {pct['identity_lhs_pv_note']:.6f}")
     print(f"Check RHS Collateral+Swap-Adjustments %: {pct['identity_rhs_reconstructed']:.6f}")
     print(f"Identity error %: {pct['identity_error']:.8f}")
+    note_leg = result.get('note_leg', {})
+    monte = note_leg.get('monte_info') or result.get('monte_info')
+    if monte:
+        print('Monte Carlo trigger info:')
+        for k, v in monte.items():
+            print(f"  {k}: {v}")
 
 
 def parse_args():

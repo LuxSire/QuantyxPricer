@@ -35,9 +35,9 @@ except ModuleNotFoundError:
     )
 
 try:
-    from models import pdf_report
+    from reporting import pdf_report
 except ModuleNotFoundError:
-    import pdf_report
+    import reporting.pdf_report as pdf_report
 
 BASE_DIR = Path(__file__).resolve().parent
 

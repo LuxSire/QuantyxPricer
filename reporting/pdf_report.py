@@ -151,7 +151,8 @@ def _build_report_lines(model_name: str, instrument_id: str, input_payload, outp
         idx_rows.append(('PV(Note) %', pct('pv_note') or output_payload.get('pv_note')))
         idx_rows.append(('  - Coupons %', pct('pv_note_coupons') or output_payload.get('pv_note_coupons')))
         idx_rows.append(('  - Redemption %', pct('pv_note_redemption') or output_payload.get('pv_note_redemption')))
-        idx_rows.append(('Yield to Maturity', output_payload.get('yield_to_maturity')))
+        # Prefer the normalized `model_ytm_to_maturity` key used by hullwhite
+        idx_rows.append(('Yield to Maturity', output_payload.get('model_ytm_to_maturity') or output_payload.get('yield_to_maturity')))
         idx_rows.append(('PV(Collateral) %', pct('pv_collateral') or output_payload.get('pv_collateral')))
         idx_rows.append(('PV(Collateral model estimate) %', pct('pv_collateral_model') or output_payload.get('pv_collateral_model')))
         idx_rows.append(('Collateral valuation method', output_payload.get('collateral_valuation_method')))

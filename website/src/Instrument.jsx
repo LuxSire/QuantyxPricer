@@ -70,6 +70,42 @@ export default function Instrument({ instrumentId }) {
   const entries = Object.entries(data)
   const nestedKeys = new Set(['collateral', 'swap', 'csa', 'valuation_adjustments'])
 
+  const renderValue = (k, v) => {
+    if (v && typeof v === 'object' && nestedKeys.has(k)) {
+      return (
+        <table className="nested-table">
+          <tbody>
+            {Object.entries(v).map(([nk, nv]) => (
+              <tr key={nk}>
+                <td className="nested-key">{nk}</td>
+                <td className="nested-value"><pre>{typeof nv === 'object' ? JSON.stringify(nv, null, 2) : String(nv)}</pre></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )
+    }
+    if (k === 'call_dates' && Array.isArray(v)) {
+      return (
+        <table className="call-dates-table">
+          <thead>
+            <tr><th>Call Date</th></tr>
+          </thead>
+          <tbody>
+            {v.map((item, ri) => (
+              Array.isArray(item) ? (
+                <tr key={ri}>{item.map((c, ci) => <td key={ci}>{String(c)}</td>)}</tr>
+              ) : (
+                <tr key={ri}><td>{String(item)}</td></tr>
+              )
+            ))}
+          </tbody>
+        </table>
+      )
+    }
+    return <pre>{typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v)}</pre>
+  }
+
   return (
     <div>
       <a href="#" onClick={(e)=>{e.preventDefault(); window.location.hash=''}}>&larr; Back</a>
@@ -79,35 +115,7 @@ export default function Instrument({ instrumentId }) {
           <div key={k} className="detail-row">
             <dt className="detail-key">{k}</dt>
             <dd className="detail-value">
-              {v && typeof v === 'object' && nestedKeys.has(k) ? (
-                <table className="nested-table">
-                  <tbody>
-                    {Object.entries(v).map(([nk, nv]) => (
-                      <tr key={nk}>
-                        <td className="nested-key">{nk}</td>
-                        <td className="nested-value"><pre>{typeof nv === 'object' ? JSON.stringify(nv, null, 2) : String(nv)}</pre></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (k === 'call_dates' && Array.isArray(v) ? (
-                <table className="call-dates-table">
-                  <thead>
-                    <tr><th>Call Date</th></tr>
-                  </thead>
-                  <tbody>
-                    {v.map((item, ri) => (
-                      Array.isArray(item) ? (
-                        <tr key={ri}>{item.map((c, ci) => <td key={ci}>{String(c)}</td>)}</tr>
-                      ) : (
-                        <tr key={ri}><td>{String(item)}</td></tr>
-                      )
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <pre>{typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v)}</pre>
-              )}
+              {renderValue(k, v)}
             </dd>
           </div>
         ))}

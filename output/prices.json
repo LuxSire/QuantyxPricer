@@ -1616,7 +1616,9 @@
         "selected_call_date": "2044-02-18",
         "npv_to_first_call": 87183846.99415472,
         "npv_to_worst_call": 87183846.99415472,
-        "npv_to_maturity": 87183846.99415472
+        "npv_to_maturity": 87183846.99415472,
+        "monte_info": null,
+        "call_scenarios": []
       },
       "collateral_leg": {
         "pv_collateral": 78023348.64148691,
@@ -2064,7 +2066,9 @@
         "selected_call_date": "2041-09-15",
         "npv_to_first_call": 144205704.011639,
         "npv_to_worst_call": 144205704.011639,
-        "npv_to_maturity": 144205704.011639
+        "npv_to_maturity": 144205704.011639,
+        "monte_info": null,
+        "call_scenarios": []
       },
       "collateral_leg": {
         "pv_collateral": 98891000.0,
@@ -2407,7 +2411,9 @@
         "selected_call_date": "2032-05-03",
         "npv_to_first_call": 98718548.30183521,
         "npv_to_worst_call": 98718548.30183521,
-        "npv_to_maturity": 98718548.30183521
+        "npv_to_maturity": 98718548.30183521,
+        "monte_info": null,
+        "call_scenarios": []
       },
       "collateral_leg": {
         "pv_collateral": 97370100.0,
@@ -3005,259 +3011,81 @@
       "evaluation_date": "2026-06-11",
       "note_discount_curve_name": "EUR_OIS_PROXY",
       "collateral_discount_curve_name": "EUR_OIS_PROXY",
-      "valuation_mode": "to_maturity",
-      "selected_call_date": "2053-08-15",
+      "valuation_mode": "call_and_maturity",
+      "selected_call_date": "2036-08-15",
       "issue_price": 100.0,
       "note_notional": 125000000.0,
-      "pv_note": 62524078.16037954,
+      "pv_note": 153971854.25216833,
       "pv_collateral": 125117099.59768799,
       "pv_collateral_model": 158077221.3388228,
       "collateral_valuation_method": "market_dirty_price",
-      "pv_swap": -55613610.68905707,
+      "pv_swap": 33882273.719842255,
       "pv_adjustments": {
-        "pv_fees": 1495588.0174824395,
-        "pv_funding": 2492646.695804067,
-        "pv_csa": 997058.6783216264,
-        "pv_residual_basis": 1994117.3566432528,
-        "pv_total_adjustments": 6979410.748251386
+        "pv_fees": 1077325.5140061255,
+        "pv_funding": 1795542.5233435426,
+        "pv_csa": 718217.009337417,
+        "pv_residual_basis": 1436434.018674834,
+        "pv_total_adjustments": 5027519.065361919
       },
-      "identity_lhs_pv_note": 62524078.16037954,
-      "identity_rhs_reconstructed": 62524078.16037954,
+      "identity_lhs_pv_note": 153971854.25216833,
+      "identity_rhs_reconstructed": 153971854.25216833,
       "identity_error": 0.0,
       "npv_to_first_call": 153971854.25216833,
       "npv_to_worst_call": 153971854.25216833,
       "npv_to_maturity": 62524078.16037954,
       "price_pct": {
-        "pv_note": 50.01926252830363,
+        "pv_note": 123.17748340173466,
         "pv_note_to_call": 123.17748340173466,
         "pv_note_to_worst": 123.17748340173466,
         "pv_note_to_maturity": 50.01926252830363,
         "pv_collateral": 100.09367967815038,
         "pv_collateral_model": 126.46177707105825,
-        "pv_swap": -44.490888551245654,
-        "pv_fees": 1.1964704139859517,
-        "pv_funding": 1.9941173566432535,
-        "pv_csa": 0.7976469426573011,
-        "pv_residual_basis": 1.5952938853146021,
-        "pv_total_adjustments": 5.5835285986011085,
-        "identity_lhs_pv_note": 50.01926252830363,
-        "identity_rhs_reconstructed": 50.01926252830363,
+        "pv_swap": 27.105818975873802,
+        "pv_fees": 0.8618604112049003,
+        "pv_funding": 1.4364340186748341,
+        "pv_csa": 0.5745736074699336,
+        "pv_residual_basis": 1.1491472149398672,
+        "pv_total_adjustments": 4.022015252289535,
+        "identity_lhs_pv_note": 123.17748340173466,
+        "identity_rhs_reconstructed": 123.17748340173466,
         "identity_error": 0.0
       },
       "note_leg": {
-        "pv_note": 62524078.16037954,
+        "pv_note": 153971854.25216833,
         "pv_note_coupons": 0.0,
-        "pv_note_redemption": 62524078.16037954,
+        "pv_note_redemption": 153971854.25216833,
         "cashflows": [
           {
-            "date": "2027-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.9846137114018286,
-            "pv": 0.0
-          },
-          {
-            "date": "2028-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.9617270754478447,
-            "pv": 0.0
-          },
-          {
-            "date": "2029-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.9380602167926578,
-            "pv": 0.0
-          },
-          {
-            "date": "2030-02-25",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.9147141261131996,
-            "pv": 0.0
-          },
-          {
-            "date": "2031-02-24",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.8918121285285531,
-            "pv": 0.0
-          },
-          {
-            "date": "2032-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.8694909152203644,
-            "pv": 0.0
-          },
-          {
-            "date": "2033-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.8475336118582673,
-            "pv": 0.0
-          },
-          {
-            "date": "2034-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.8261607128471355,
-            "pv": 0.0
-          },
-          {
-            "date": "2035-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.8052458546594532,
-            "pv": 0.0
-          },
-          {
-            "date": "2036-02-25",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.7845918332221973,
-            "pv": 0.0
-          },
-          {
-            "date": "2037-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.7647661751211734,
-            "pv": 0.0
-          },
-          {
-            "date": "2038-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.7454213669704569,
-            "pv": 0.0
-          },
-          {
-            "date": "2039-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.7264932737798404,
-            "pv": 0.0
-          },
-          {
-            "date": "2040-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.7079750494472528,
-            "pv": 0.0
-          },
-          {
-            "date": "2041-02-25",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.6897126604503048,
-            "pv": 0.0
-          },
-          {
-            "date": "2042-02-24",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.6721943434808222,
-            "pv": 0.0
-          },
-          {
-            "date": "2043-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.6551378937281641,
-            "pv": 0.0
-          },
-          {
-            "date": "2044-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.6384309221765606,
-            "pv": 0.0
-          },
-          {
-            "date": "2045-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.622068514465326,
-            "pv": 0.0
-          },
-          {
-            "date": "2046-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.6061320603347504,
-            "pv": 0.0
-          },
-          {
-            "date": "2047-02-25",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.5906578306146555,
-            "pv": 0.0
-          },
-          {
-            "date": "2048-02-24",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.575755464637119,
-            "pv": 0.0
-          },
-          {
-            "date": "2049-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.5611784925321474,
-            "pv": 0.0
-          },
-          {
-            "date": "2050-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.5469596527595263,
-            "pv": 0.0
-          },
-          {
-            "date": "2051-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.533090432082108,
-            "pv": 0.0
-          },
-          {
-            "date": "2052-02-23",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.5195625123611619,
-            "pv": 0.0
-          },
-          {
-            "date": "2053-02-24",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.5062963693857423,
-            "pv": 0.0
-          },
-          {
-            "date": "2053-08-15",
-            "type": "coupon",
-            "amount": 0.0,
-            "df": 0.5001926252830363,
-            "pv": 0.0
-          },
-          {
-            "date": "2053-08-15",
+            "date": "2036-08-15",
             "type": "redemption",
-            "amount": 125000000.0,
-            "df": 0.5001926252830363,
-            "pv": 62524078.16037954
+            "amount": 198644740.4875,
+            "df": 0.7751116585030209,
+            "pv": 153971854.25216833
           }
         ],
-        "valuation_mode": "to_maturity",
-        "selected_call_date": "2053-08-15",
+        "valuation_mode": "call_and_maturity",
+        "selected_call_date": "2036-08-15",
         "npv_to_first_call": 153971854.25216833,
         "npv_to_worst_call": 153971854.25216833,
-        "npv_to_maturity": 62524078.16037954
+        "npv_to_maturity": 62524078.16037954,
+        "monte_info": {
+          "monte_paths": 1000,
+          "monte_vol": 0.02,
+          "trigger_level_used_pct": 71.35684932,
+          "p_call": 1.0,
+          "call_date": "2036-08-15",
+          "fd_mean_pct": 93.4393502274488
+        },
+        "call_scenarios": [
+          {
+            "horizon_date": "2036-08-15",
+            "pv_note": 153971854.25216833,
+            "pv_note_coupons": 0.0,
+            "pv_note_redemption": 153971854.25216833,
+            "triggered": null,
+            "forward_dirty_pct": 93.4393502274488
+          }
+        ]
       },
       "collateral_leg": {
         "pv_collateral": 125117099.59768799,
@@ -3469,7 +3297,7 @@
           }
         ]
       },
-      "swap_mode": "calibration_residual"
+      "swap_mode": "explicit_cashflows"
     }
   },
   {
@@ -3677,7 +3505,18 @@
         "selected_call_date": "2046-03-15",
         "npv_to_first_call": 47035406.771009296,
         "npv_to_worst_call": 47035406.771009296,
-        "npv_to_maturity": 53361671.42254574
+        "npv_to_maturity": 53361671.42254574,
+        "monte_info": null,
+        "call_scenarios": [
+          {
+            "horizon_date": "2029-03-15",
+            "pv_note": 47035406.771009296,
+            "pv_note_coupons": 5915960.205064598,
+            "pv_note_redemption": 41119446.5659447,
+            "triggered": null,
+            "forward_dirty_pct": null
+          }
+        ]
       },
       "collateral_leg": {
         "pv_collateral": 51624426.78007999,

@@ -142,6 +142,28 @@ def get_reference_day_count(name: str):
     return ref_day_counts[name]()
 
 
+def parse_spread_from_denomination(bond_data):
+    import re
+    denom = str(bond_data.get('denomination', '') or '')
+    # Look for patterns like +0.8% or +80bp or +0.80%
+    m_pct = re.search(r"([+-]?\d+(?:\.\d+)?)%", denom)
+    if m_pct:
+        try:
+            val = float(m_pct.group(1))
+            # percent to decimal
+            return val / 100.0
+        except Exception:
+            pass
+    m_bp = re.search(r"([+-]?\d+(?:\.\d+)?)\s*bps?|bp\b", denom, flags=re.IGNORECASE)
+    if m_bp:
+        try:
+            val = float(m_bp.group(1))
+            return val / 10000.0
+        except Exception:
+            pass
+    return None
+
+
 def normalize_curve_catalog(curve_json):
     if isinstance(curve_json, dict):
         return None
@@ -177,6 +199,16 @@ def select_discount_curve_config(curve_json, bond_data):
     catalog = normalize_curve_catalog(curve_json)
     if catalog is None:
         return curve_json
+
+    # Allow the curve catalog to explicitly map curves to instruments.
+    # If a curve entry contains an `instruments` or `applies_to` list, and the
+    # bond's `instrument_id` or `isin` appears there, prefer that curve.
+    instr = str(bond_data.get('instrument_id') or bond_data.get('isin') or '').strip()
+    if instr:
+        for name, cfg in catalog.items():
+            applies = cfg.get('instruments') or cfg.get('applies_to') or cfg.get('instrument_ids')
+            if isinstance(applies, (list, tuple)) and instr in [str(x).strip() for x in applies]:
+                return cfg
 
     requested_name = bond_data.get('discount_curve_name') or bond_data.get('curve_name')
     if requested_name:
@@ -468,6 +500,34 @@ def build_cms_context(curve_json, bond_data, eval_date, default_curve):
 def get_coupon_rate(curve, d0, d1, bond_data, eval_date, cms_context=None):
     structure = bond_data.get('coupon_structure', 'fixed')
 
+    # Pure floating-rate note: compute forward rate + spread
+    if structure == 'floating':
+        ref_day_count = get_reference_day_count(
+            bond_data.get('float_reference_day_count', 'Actual360')
+        )
+        spread = bond_data.get('float_spread')
+        if spread is None:
+            parsed = parse_spread_from_denomination(bond_data)
+            spread = parsed if parsed is not None else 0.0
+        floor_rate = bond_data.get('float_floor')
+
+        d_start = d0 if d0 > eval_date else eval_date
+        if d_start >= d1:
+            fwd_rate = 0.0
+        else:
+            yf = ref_day_count.yearFraction(d_start, d1)
+            if yf <= 0.0:
+                fwd_rate = 0.0
+            else:
+                df0 = curve.discount(d_start)
+                df1 = curve.discount(d1)
+                fwd_rate = (df0 / df1 - 1.0) / yf
+
+        rate = fwd_rate + spread
+        if floor_rate is not None:
+            rate = max(rate, floor_rate)
+        return rate
+
     if structure == 'fixed':
         return bond_data['fixed_coupon_rate']
 
@@ -550,7 +610,10 @@ def get_coupon_rate(curve, d0, d1, bond_data, eval_date, cms_context=None):
     ref_day_count = get_reference_day_count(
         bond_data.get('float_reference_day_count', 'Actual360')
     )
-    spread = bond_data.get('float_spread', 0.0)
+    spread = bond_data.get('float_spread')
+    if spread is None:
+        parsed = parse_spread_from_denomination(bond_data)
+        spread = parsed if parsed is not None else 0.0
     floor_rate = bond_data.get('float_floor')
 
     d_start = d0 if d0 > eval_date else eval_date

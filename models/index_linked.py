@@ -196,7 +196,15 @@ def price_index_linked_note(note_data, curve_json):
     issue_price = float(note_data.get('issue_price', 100.0))
 
     note_leg = price_note(note_data, note_curve, note_curve_day_count)
-    collateral_leg = spire.model_collateral_pv(note_data['collateral'], collateral_curve, collateral_curve_day_count)
+    if note_data.get('collateral'):
+        collateral_leg = spire.model_collateral_pv(note_data['collateral'], collateral_curve, collateral_curve_day_count)
+    else:
+        collateral_leg = {
+            'pv_collateral': 0.0,
+            'pv_collateral_model': 0.0,
+            'valuation_method': None,
+            'cashflows': [],
+        }
     adjustments = spire.compute_valuation_adjustments(note_data, note_curve, note_curve_day_count)
     contract_completeness = assess_contract_completeness(note_data)
 

@@ -150,5 +150,38 @@
       { "tenor": "15Y", "rate": -0.0030, "source": "public proxy" },
       { "tenor": "20Y", "rate": -0.0032, "source": "public proxy" }
     ]
+  },
+  {
+    "curve_name": "ISTAT_CPI_INFLATION",
+    "as_of": "2026-06-08",
+    "index": "ISTAT CPI",
+    "day_count": "Actual365Fixed",
+    "calendar": "TARGET",
+    "compounding": "ZeroCoupon",
+    "quote_type": "inflation_breakeven_proxy",
+    "pillars": [
+      { "tenor": "1Y",  "rate": 0.0250, "source": "proxy breakeven" },
+      { "tenor": "2Y",  "rate": 0.0240, "source": "proxy breakeven" },
+      { "tenor": "3Y",  "rate": 0.0235, "source": "proxy breakeven" },
+      { "tenor": "5Y",  "rate": 0.0225, "source": "proxy breakeven" },
+      { "tenor": "7Y",  "rate": 0.0225, "source": "proxy breakeven" },
+      { "tenor": "10Y", "rate": 0.0230, "source": "proxy breakeven" },
+      { "tenor": "15Y", "rate": 0.0235, "source": "proxy breakeven" },
+      { "tenor": "20Y", "rate": 0.0238, "source": "proxy breakeven" },
+      { "tenor": "30Y", "rate": 0.0240, "source": "proxy breakeven" }
+    ]
+  }
+ ,
+  {
+    "curve_name": "IDN_CDS_PROXY",
+    "as_of": "2026-06-08",
+    "quote_type": "cds_spreads",
+    "reference_entity": "Republic of Indonesia",
+    "reference_obligations": ["USY20721BS73"],
+    "pillars": [
+      { "tenor": "1Y", "spread_bp": 100, "source": "input proxy" },
+      { "tenor": "2Y", "spread_bp": 120, "source": "input proxy" },
+      { "tenor": "5Y", "spread_bp": 150, "source": "input proxy" }
+    ]
   }
 ]

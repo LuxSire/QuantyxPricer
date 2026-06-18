@@ -1,4 +1,15 @@
 import React, { useEffect, useState } from 'react'
+import { formatNumberForDisplay, isPercentageKey } from './helper'
+import { useAsset } from './hooks/useAsset'
+import {
+  Radar,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  ResponsiveContainer,
+  Tooltip,
+} from 'recharts'
 
 export default function Instrument({ instrumentId, apiBase = '' }) {
   // instrumentId may be encoded as "ID::bond_file.json" from the table link
@@ -17,84 +28,40 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
   const [saving, setSaving] = useState(false)
   const [snack, setSnack] = useState({ visible: false, message: '', type: 'info' })
   const [snackHiding, setSnackHiding] = useState(false)
+  const { fetchAsset } = useAsset(apiBase)
 
   useEffect(() => {
     let mounted = true
     async function fetchJson() {
       try {
-        // Primary source: backend endpoint /fetch_asset?instrument_id=...
-        if (isin) {
-          const base = String(apiBase || '').replace(/\/$/, '')
-          const endpoint = `${base}/fetch_asset?instrument_id=${encodeURIComponent(isin)}`
-          try {
-            const r = await fetch(endpoint)
-            if (r.ok) {
-              const j = await r.json()
-              if (!mounted) return
-              setData(j)
-              return
-            }
-          } catch {
-            // continue to local fallback
-          }
+        if (!isin) {
+          if (mounted) setError('No instrument ID available')
+          return
         }
-
-        // Fallback source: local public/assets JSON files
-        const paths = []
-        if (bondFile) {
-          // try explicit bond file first (both absolute and relative)
-          paths.push(`/assets/${bondFile}`)
-          paths.push(`assets/${bondFile}`)
-          paths.push(`./assets/${bondFile}`)
-          paths.push(`/assets/${bondFile.replace(/\\s+/g, '')}`)
+        const j = await fetchAsset(isin)
+        if (!mounted) return
+        if (j) {
+          setData(j)
+        } else {
+          setError('Could not fetch asset JSON for ' + isin)
         }
-        // fallbacks based on isin (try .json and no-leading-slash variants)
-        if (isin) {
-          paths.push(`/assets/${isin}.json`)
-          paths.push(`assets/${isin}.json`)
-          paths.push(`./assets/${isin}.json`)
-          paths.push(`/assets/${isin.toUpperCase()}.json`)
-          paths.push(`/assets/${isin}.JSON`)
-        }
-        for (const p of paths) {
-          try {
-            const r = await fetch(p)
-            if (!r.ok) continue
-            const j = await r.json()
-            if (!mounted) return
-            setData(j)
-            return
-          } catch {
-            continue
-          }
-        }
-        if (mounted) setError('Could not fetch asset JSON for ' + (bondFile || isin))
       } catch (e) {
         if (mounted) setError(String(e))
       }
     }
     fetchJson()
     return () => { mounted = false }
-  }, [instrumentId, apiBase, bondFile, isin])
+  }, [instrumentId, apiBase, bondFile, isin, fetchAsset])
 
   useEffect(() => {
     let mounted = true
     async function fetchPrices() {
       try {
-        // Try backend /prices endpoint first, then fall back to local prices
-        const tryPaths = ['/prices', '/src/prices.json', '/prices.json', 'prices.json']
-        let j = null
-        for (const p of tryPaths) {
-          try {
-            const r = await fetch(p)
-            if (!r.ok) continue
-            j = await r.json()
-            break
-          } catch {
-            continue
-          }
-        }
-        if (!j) return
+        const base = String(apiBase || '').replace(/\/$/, '')
+        const endpoint = `${base}/prices`
+        const r = await fetch(endpoint)
+        if (!r.ok) return
+        const j = await r.json()
         if (!mounted) return
         // find by instrument id (match either instrument_id or bond_file)
         const isinKey = isin || instrumentId
@@ -106,7 +73,7 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
     }
     fetchPrices()
     return () => { mounted = false }
-  }, [instrumentId, data, bondFile, isin])
+  }, [instrumentId, data, bondFile, isin, apiBase])
 
   useEffect(() => {
     let hideTimer = null
@@ -204,18 +171,40 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
     pv_note_coupons: priceResult && (priceResult.pv_note_coupons || (priceResult.note_leg && priceResult.note_leg.pv_note_coupons) || (priceResult.price_pct && priceResult.price_pct.pv_note_coupons) || null)
   }
 
+  const toFiniteNumber = (value) => {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+
+  const targetPrice = toFiniteNumber(data.target_price)
+  const radarSource = [
+    { metric: 'PV', actual: toFiniteNumber(colPV) },
+    { metric: 'PV_to_worst', actual: toFiniteNumber(colWorst) },
+    { metric: 'PV_to_maturity', actual: toFiniteNumber(colMat) },
+  ]
+
+  const hasRadarChart = Number.isFinite(targetPrice) && radarSource.every((d) => Number.isFinite(d.actual))
+  const radarData = hasRadarChart
+    ? radarSource.map((d) => ({
+        metric: d.metric,
+        // Chart radius represents distance from target price, so target sits at the center.
+        delta_from_target: Math.abs(d.actual - targetPrice),
+        actual: d.actual,
+        target: targetPrice,
+      }))
+    : []
+  const radarMax = hasRadarChart
+    ? Math.max(...radarData.map((d) => d.delta_from_target), 1)
+    : 1
+
   const renderValue = (k, v) => {
     const truncate = (s, n = 50) => (typeof s === 'string' && s.length > n) ? s.slice(0, n - 1) + '…' : s
-    // format numeric fields: percentages (YTM/YTD/coupon/any *rate* keys) and 3-decimal numbers (PV)
     const lowerKey = String(k).toLowerCase()
-    const percentageKeys = new Set(['ytm', 'ytd', 'yield_to_maturity', 'model_ytm_to_maturity', 'ytm_expected', 'fixed_coupon_rate', 'coupon_rate'])
-    const threeDpKeys = new Set(['pv_note', 'pv_note_coupons', 'pv_to_worst', 'pv_to_maturity', 'pv_note_to_worst', 'pv_note_to_maturity', 'pv_note_to_worst_call'])
     if (typeof v === 'number') {
-      // treat known percentage keys or any key containing 'rate' as percentage
-      if (percentageKeys.has(k) || percentageKeys.has(lowerKey) || lowerKey.includes('rate')) {
-        return String((v * 100).toFixed(3)) + '%'
+      if (isPercentageKey(lowerKey)) {
+        return formatNumberForDisplay(v, { scale: 100, suffix: '%' })
       }
-      if (threeDpKeys.has(k) || threeDpKeys.has(lowerKey)) return String(Number(v).toFixed(3))
+      return formatNumberForDisplay(v)
     }
     if (v && typeof v === 'object' && nestedKeys.has(k)) {
       return (
@@ -498,6 +487,90 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
         )}
       </div>
       <h2>{(data.description ? (data.description.length > 100 ? data.description.slice(0, 99) + '…' : data.description) : instrumentId)}</h2>
+      <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 16 }}>
+        <div style={{ width: 380, height: 300, position: 'relative' }}>
+          {hasRadarChart ? (
+            <>
+              <ResponsiveContainer width="100%" height="100%">
+                <RadarChart data={radarData} outerRadius="72%">
+                  <PolarGrid />
+                  <PolarAngleAxis
+                    dataKey="metric"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={({ x, y, payload, textAnchor }) => {
+                      const item = radarData.find((d) => d.metric === payload?.value)
+                      if (!item || !Number.isFinite(x) || !Number.isFinite(y)) return null
+                      return (
+                        <text
+                          x={x}
+                          y={y}
+                          textAnchor={textAnchor || 'middle'}
+                          dominantBaseline="central"
+                          fill="#ffffff"
+                          fontSize={11}
+                          fontWeight={600}
+                          stroke="#0f172a"
+                          strokeWidth={2}
+                          paintOrder="stroke"
+                        >
+                          {formatNumberForDisplay(item.actual)}
+                        </text>
+                      )
+                    }}
+                  />
+                  <PolarRadiusAxis
+                    domain={[0, radarMax]}
+                    tick={false}
+                    axisLine={false}
+                  />
+                  <Tooltip
+                    formatter={(value, name, payload) => {
+                      if (name === 'delta_from_target') {
+                        const item = payload && payload.payload ? payload.payload : null
+                        const actual = item && Number.isFinite(item.actual)
+                          ? formatNumberForDisplay(item.actual)
+                          : '-'
+                        const target = item && Number.isFinite(item.target)
+                          ? formatNumberForDisplay(item.target)
+                          : '-'
+                        return [`Δ ${formatNumberForDisplay(Number(value))} | actual ${actual} | target ${target}`, 'distance']
+                      }
+                      return [formatNumberForDisplay(Number(value)), name]
+                    }}
+                  />
+                  <Radar
+                    name="distance"
+                    dataKey="delta_from_target"
+                    stroke="#206095"
+                    fill="#206095"
+                    fillOpacity={0.35}
+                  />
+                </RadarChart>
+              </ResponsiveContainer>
+              <div
+                style={{
+                  position: 'absolute',
+                  left: '50%',
+                  top: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  fontSize: 12,
+                  textAlign: 'center',
+                  lineHeight: 1.2,
+                  color: '#ffffff',
+                  pointerEvents: 'none',
+                }}
+              >
+                <div>{formatNumberForDisplay(targetPrice)}</div>
+              </div>
+            </>
+          ) : (
+            <div style={{ padding: 8, color: '#6b7280' }}>
+              Spider chart unavailable: missing numeric PV/target values.
+            </div>
+          )}
+        </div>
+      </div>
       <table className="instrument-table" style={{width: '100%', border: 'none'}}>
         <tbody>
           {rows.map((row, ri) => (

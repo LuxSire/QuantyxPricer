@@ -212,6 +212,8 @@ def price_cln(curve, bond_data: Dict[str, Any], curve_json=None):
     result['ytm_expected'] = ytm_expected
     # write canonical 'ytm' as requested (expected)
     result['ytm'] = ytm_expected
+    # CLN currently has no issuer call schedule, so YTC is not applicable.
+    result['ytc'] = None
     return result
 
 

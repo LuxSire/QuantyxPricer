@@ -2,3 +2,5 @@ fastapi
 uvicorn
 pydantic
 python-dateutil
+mysql-connector-python
+python-dotenv

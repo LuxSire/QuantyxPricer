@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import FileUploader from './FileUploader'
+import { useAsset } from './hooks/useAsset'
 
 export default function Sidebar({
   models = [],
@@ -18,6 +18,9 @@ export default function Sidebar({
   apiBase,
 }) {
   const [showUploader, setShowUploader] = useState(false)
+  const [uploadMode, setUploadMode] = useState('json')
+  const { loading: uploading, error: uploadError, uploadJson, uploadTermsheet } = useAsset(apiBase)
+  
   return (
     <aside className="sidebar">
       <div style={{ marginBottom: 12 }}>
@@ -73,7 +76,63 @@ export default function Sidebar({
           <button className="clear-btn" onClick={() => setShowUploader(true)}>Add</button>
           <button className="clear-btn" onClick={clearAll}>Clear filters</button>
         </div>
-        {showUploader && <FileUploader onClose={() => setShowUploader(false)} onSaved={(r) => { console.log('Saved asset:', r) }} />}
+        {showUploader && (
+          <div className="uploader-backdrop" onClick={() => setShowUploader(false)}>
+            <div className="uploader-modal" onClick={(e) => e.stopPropagation()}>
+              <h3>Upload Asset</h3>
+              <div style={{ marginBottom: 10, display: 'flex', gap: 14 }}>
+                <label>
+                  <input
+                    type="radio"
+                    name="upload-mode"
+                    value="json"
+                    checked={uploadMode === 'json'}
+                    onChange={() => setUploadMode('json')}
+                  />{' '}
+                  JSON
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="upload-mode"
+                    value="termsheet"
+                    checked={uploadMode === 'termsheet'}
+                    onChange={() => setUploadMode('termsheet')}
+                  />{' '}
+                  Termsheet (PDF)
+                </label>
+              </div>
+              <input
+                type="file"
+                accept={uploadMode === 'termsheet' ? '.pdf' : '.json'}
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (!f) return
+                  if (uploadMode === 'termsheet') {
+                    uploadTermsheet(f)
+                      .then(() => {
+                        console.log('Termsheet uploaded')
+                        setShowUploader(false)
+                      })
+                      .catch(() => {})
+                  } else {
+                    f.text()
+                      .then((txt) => JSON.parse(txt))
+                      .then((obj) => uploadJson(obj))
+                      .then(() => {
+                        console.log('JSON uploaded')
+                        setShowUploader(false)
+                      })
+                      .catch((err) => console.error(err))
+                  }
+                }}
+              />
+              {uploadError && <div style={{ color: '#dc2626', marginTop: 8 }}>{uploadError}</div>}
+              {uploading && <div style={{ color: '#0891b2', marginTop: 8 }}>Uploading...</div>}
+              <button onClick={() => setShowUploader(false)} style={{ marginTop: 12 }}>Close</button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={{ marginTop: 16 }}>

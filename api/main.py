@@ -13,6 +13,11 @@ import threading
 import uuid
 from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
 
+try:
+    from . import db
+except ImportError:
+    import db
+
 app = FastAPI(
     title="Quantyx Pricer API",
     description="API for uploading assets and pricing single or all instruments.",
@@ -181,6 +186,15 @@ async def save_asset(request: Request, payload: dict = None):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     print(f"[API] Saved asset to {path} (size={path.stat().st_size} bytes)")
+    
+    # Also save to MySQL database
+    try:
+        row_id = db.insert_asset_json(bond)
+        print(f"[API] Inserted asset into MySQL with id={row_id}")
+    except Exception as e:
+        print(f"[API] Warning: could not insert asset into MySQL: {e}")
+        # Do not fail the upload if DB insert fails; file is already saved
+    
     return {"saved": filename, "path": str(path)}
 
 

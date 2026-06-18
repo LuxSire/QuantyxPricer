@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import logo from '../logo_q.png'
 import Instrument from './Instrument'
 import Sidebar from './Sidebar'
+import { usePrices } from './hooks/usePrices'
 
 function fmt(v) {
   if (v == null) return ''
@@ -34,8 +35,6 @@ export default function App() {
   const [pricingIds, setPricingIds] = useState([])
   const [snack, setSnack] = useState({ visible: false, message: '', type: 'info' })
   const [snackHiding, setSnackHiding] = useState(false)
-  const [pricingAll, setPricingAll] = useState(false)
-  const [updatingCurves, setUpdatingCurves] = useState(false)
   const [filterInstrument, setFilterInstrument] = useState('')
   const [filterModel, setFilterModel] = useState('')
   const [filterCurrency, setFilterCurrency] = useState('')
@@ -44,29 +43,28 @@ export default function App() {
     if (h.startsWith('#/instrument/')) return h.replace('#/instrument/', '')
     return null
   })
+  
+  const { pricingAll, updatingCurves, onPriceAll: createOnPriceAll, onUpdateCurves: createOnUpdateCurves } = usePrices(apiBase)
 
   useEffect(() => {
-    const tryPaths = [
-      apiBase ? `${apiBase}/prices` : '/prices',
-      apiBase ? `${apiBase}/prices.json` : '/prices.json',
-      'prices.json'
-    ]
+    const endpoint = apiBase ? `${apiBase}/prices` : '/prices'
     let mounted = true
 
     async function fetchOne() {
-      for (const p of tryPaths) {
-        try {
-          const r = await fetch(p)
-          if (!r.ok) continue
-          const data = await r.json()
-          if (!mounted) return
-          setRows(data)
+      try {
+        const r = await fetch(endpoint)
+        if (!r.ok) {
+          if (mounted) setError('Could not fetch prices from API')
           return
-        } catch {
-          continue
         }
+        const data = await r.json()
+        if (!mounted) return
+        setRows(data)
+        return
+      } catch {
+        // handled by error set below
       }
-      if (mounted) setError('Could not fetch output/prices.json from server')
+      if (mounted) setError('Could not fetch prices from API')
     }
 
     fetchOne()
@@ -125,14 +123,14 @@ export default function App() {
   }, [snack.visible, snackHiding])
 
   const refreshPrices = async () => {
-    for (const p2 of [apiBase ? `${apiBase}/prices` : '/prices', apiBase ? `${apiBase}/prices.json` : '/prices.json', 'prices.json']) {
-      try {
-        const r2 = await fetch(p2)
-        if (!r2.ok) continue
-        const data2 = await r2.json()
-        setRows(data2)
-        break
-      } catch { continue }
+    const endpoint = apiBase ? `${apiBase}/prices` : '/prices'
+    try {
+      const r2 = await fetch(endpoint)
+      if (!r2.ok) return
+      const data2 = await r2.json()
+      setRows(data2)
+    } catch {
+      // no-op
     }
   }
 
@@ -192,108 +190,9 @@ export default function App() {
           setFilterCurrency={setFilterCurrency}
           clearAll={() => { setFilterInstrument(''); setFilterModel(''); setFilterCurrency('') }}
           apiBase={apiBase}
-          onPriceAll={async () => {
-            if (pricingAll) return
-            setPricingAll(true)
-            setSnack({ visible: true, message: 'Starting price all...', type: 'info' })
-            try {
-              const resp = await fetch((apiBase ? `${apiBase}` : '') + '/price_all', { method: 'POST' })
-              if (!resp.ok) {
-                const txt = await resp.text().catch(() => '<no body>')
-                setSnack({ visible: true, message: `Price all failed: ${txt}`, type: 'error' })
-                setPricingAll(false)
-                return
-              }
-              const jobObj = await resp.json().catch(() => null)
-              const jobId = jobObj && jobObj.job_id
-              if (!jobId) {
-                // fallback: maybe server returned immediate data
-                if (Array.isArray(jobObj)) setRows(jobObj)
-                setSnack({ visible: true, message: 'Price all completed', type: 'success' })
-                setPricingAll(false)
-                return
-              }
-
-              // poll job status
-              const statusUrl = (apiBase ? `${apiBase}` : '') + `/jobs/${jobId}`
-              let done = false
-              while (!done) {
-                await new Promise(r => setTimeout(r, 2000))
-                try {
-                  const sresp = await fetch(statusUrl)
-                  if (!sresp.ok) continue
-                  const s = await sresp.json()
-                  if (s.status === 'pending' || s.status === 'running') continue
-                  done = true
-                  if (s.status === 'succeeded') {
-                    setSnack({ visible: true, message: 'Price all succeeded', type: 'success' })
-                    // refresh prices
-                    for (const p2 of [apiBase ? `${apiBase}/prices` : '/prices', apiBase ? `${apiBase}/prices.json` : '/prices.json', 'prices.json']) {
-                      try {
-                        const r2 = await fetch(p2)
-                        if (!r2.ok) continue
-                        const data2 = await r2.json()
-                        setRows(data2)
-                        break
-                      } catch { continue }
-                    }
-                  } else {
-                    setSnack({ visible: true, message: `Price all failed: ${s.error || 'unknown'}`, type: 'error' })
-                  }
-                } catch (e) {
-                  console.error('Polling job status error', e)
-                }
-              }
-            } catch (err) {
-              setSnack({ visible: true, message: `Error calling price_all: ${String(err)}`, type: 'error' })
-            }
-            setPricingAll(false)
-          }}
+          onPriceAll={async () => await createOnPriceAll(setSnack, refreshPrices)}
           pricingAll={pricingAll}
-          onUpdateCurves={async () => {
-            if (updatingCurves) return
-            setUpdatingCurves(true)
-            setSnack({ visible: true, message: 'Starting curve update...', type: 'info' })
-            try {
-              const resp = await fetch((apiBase ? `${apiBase}` : '') + '/update_curve', { method: 'POST' })
-              if (!resp.ok) {
-                const txt = await resp.text().catch(() => '<no body>')
-                setSnack({ visible: true, message: `Update curves failed: ${txt}`, type: 'error' })
-                setUpdatingCurves(false)
-                return
-              }
-              const jobObj = await resp.json().catch(() => null)
-              const jobId = jobObj && jobObj.job_id
-              if (!jobId) {
-                setSnack({ visible: true, message: 'Update curves completed', type: 'success' })
-                setUpdatingCurves(false)
-                return
-              }
-
-              const statusUrl = (apiBase ? `${apiBase}` : '') + `/jobs/${jobId}`
-              let done = false
-              while (!done) {
-                await new Promise(r => setTimeout(r, 2000))
-                try {
-                  const sresp = await fetch(statusUrl)
-                  if (!sresp.ok) continue
-                  const s = await sresp.json()
-                  if (s.status === 'pending' || s.status === 'running') continue
-                  done = true
-                  if (s.status === 'succeeded') {
-                    setSnack({ visible: true, message: 'Update curves succeeded', type: 'success' })
-                  } else {
-                    setSnack({ visible: true, message: `Update curves failed: ${s.error || 'unknown'}`, type: 'error' })
-                  }
-                } catch (e) {
-                  console.error('Polling update_curve job status error', e)
-                }
-              }
-            } catch (err) {
-              setSnack({ visible: true, message: `Error calling update_curve: ${String(err)}`, type: 'error' })
-            }
-            setUpdatingCurves(false)
-          }}
+          onUpdateCurves={async () => await createOnUpdateCurves(setSnack)}
           updatingCurves={updatingCurves}
         />
         <div className="main-panel">

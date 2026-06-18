@@ -218,6 +218,7 @@ def price_index_linked_note(note_data, curve_json):
     lhs = note_leg['pv_note']
     rhs = collateral_leg['pv_collateral'] + pv_swap - adjustments['pv_total_adjustments']
     scale_to_pct = 100.0 / note_notional
+    lhs_pct = lhs * scale_to_pct
     
     # Calculate YTM
     ytm = calculate_yield_to_maturity(note_leg['cashflows'], evaluation_date, lhs)
@@ -228,11 +229,11 @@ def price_index_linked_note(note_data, curve_json):
         'collateral_discount_curve_name': collateral_curve_name,
         'issue_price': issue_price,
         'note_notional': note_notional,
-        'pv_note': note_leg['pv_note'],
-        'selected_npv': note_leg['pv_note'],
-        'npv_to_maturity': note_leg['pv_note'],
-        'npv_to_first_call': note_leg['pv_note'],
-        'npv_to_worst_call': note_leg['pv_note'],
+        'pv_note': lhs_pct,
+        'selected_npv': lhs_pct,
+        'npv_to_maturity': lhs_pct,
+        'npv_to_first_call': lhs_pct,
+        'npv_to_worst_call': lhs_pct,
         'pv_collateral': collateral_leg['pv_collateral'],
         'pv_collateral_model': collateral_leg['pv_collateral_model'],
         'collateral_valuation_method': collateral_leg['valuation_method'],

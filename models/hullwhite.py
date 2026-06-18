@@ -840,6 +840,37 @@ def compute_model_ytm_to_maturity(bond_data, maturity_scenario, maturity_date, e
     )
 
 
+def compute_model_ytc_to_first_call(bond_data, first_call_scenario, first_call_date, eval_date):
+    if first_call_scenario is None or first_call_date is None:
+        return None
+
+    day_count = get_day_count(bond_data['accrual_day_count'])
+    freq_per_year = get_compounding_frequency_per_year(bond_data)
+
+    amounts = []
+    times = []
+    for cf_date_iso, _, cf_amount, _, _ in first_call_scenario['cashflows']:
+        cf_date = ql.DateParser.parseISO(cf_date_iso)
+        t = day_count.yearFraction(eval_date, cf_date)
+        if t <= 0.0:
+            continue
+        amounts.append(float(cf_amount))
+        times.append(float(t))
+
+    redemption = float(bond_data.get('par', 100.0))
+    t_redemption = day_count.yearFraction(eval_date, first_call_date)
+    if t_redemption > 0.0:
+        amounts.append(redemption)
+        times.append(float(t_redemption))
+
+    return solve_ytm_from_cashflows(
+        price_amount=float(first_call_scenario['npv']),
+        cashflow_amounts=amounts,
+        cashflow_times=times,
+        freq_per_year=freq_per_year,
+    )
+
+
 def price_bond(curve, bond_data, curve_json=None, discount_curve_name=None):
     schedule, maturity_date = build_coupon_schedule(bond_data)
     eval_date = ql.Settings.instance().evaluationDate
@@ -895,6 +926,13 @@ def price_bond(curve, bond_data, curve_json=None, discount_curve_name=None):
 
     worst = min(scenarios, key=lambda x: x['npv'])
     first = min(scenarios, key=lambda x: x['call_date'])
+    first_call_date = ql.DateParser.parseISO(first['call_date'])
+    model_ytc_to_first_call = compute_model_ytc_to_first_call(
+        bond_data,
+        first,
+        first_call_date,
+        eval_date,
+    )
 
     # Select which NPV concept to report for callable structures.
     if 'valuation_mode' in bond_data:
@@ -923,6 +961,7 @@ def price_bond(curve, bond_data, curve_json=None, discount_curve_name=None):
         'npv_to_first_call': first['npv'],
         'npv_to_maturity': maturity_scenario['npv'],
         'model_ytm_to_maturity': model_ytm_to_maturity,
+        'model_ytc_to_first_call': model_ytc_to_first_call,
         'scenarios': scenarios,
         'hw_parameters': hw_params,
     }

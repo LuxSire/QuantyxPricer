@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Dict, Union, Optional
 
 import mysql.connector
 from dotenv import load_dotenv
@@ -41,7 +41,7 @@ def get_connection() -> MySQLConnection:
     )
 
 
-def insert_asset_json(payload: Union[Dict[str, Any], str]) -> int:
+def insert_asset(payload: Union[Dict[str, Any], str]) -> int:
     """Insert one asset JSON by calling stored procedure insert_asset.
 
     Stored procedure contract:
@@ -102,5 +102,37 @@ def select_assets() -> list[Dict[str, Any]]:
             asset['_code'] = row['code']
             result.append(asset)
         return result
+    finally:
+        conn.close()
+
+def select_asset(code: str) -> Optional[Dict[str, Any]]:
+    """Return the first matching row from the assets table as a parsed JSON dict.
+
+    Each row's `json` blob is decoded and returned as a Python dict.
+    The `code` and `my_row_id` columns are merged in under the keys
+    `_code` and `_id`. Returns `None` if no matching row exists.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT my_row_id, code, json FROM assets WHERE code=%s LIMIT 1', (code,))
+            row = cursor.fetchone()
+        finally:
+            cursor.close()
+
+        if not row:
+            return None
+
+        raw = row.get('json')
+        if raw is None:
+            asset = {}
+        elif isinstance(raw, (bytes, bytearray)):
+            asset = json.loads(raw.decode('utf-8'))
+        else:
+            asset = json.loads(raw)
+        asset['_id'] = row['my_row_id']
+        asset['_code'] = row['code']
+        return asset
     finally:
         conn.close()

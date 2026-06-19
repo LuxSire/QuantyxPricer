@@ -15,8 +15,10 @@ from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
 
 try:
     from . import db
+    from . import provider
 except ImportError:
     import db
+    import provider
 
 app = FastAPI(
     title="Quantyx Pricer API",
@@ -189,7 +191,7 @@ async def save_asset(request: Request, payload: dict = None):
     
     # Also save to MySQL database
     try:
-        row_id = db.insert_asset_json(bond)
+        row_id = db.insert_asset(bond)
         print(f"[API] Inserted asset into MySQL with id={row_id}")
     except Exception as e:
         print(f"[API] Warning: could not insert asset into MySQL: {e}")
@@ -322,17 +324,35 @@ async def fetch_asset(instrument_id: str):
     if not instrument_id or not instrument_id.strip():
         raise HTTPException(status_code=400, detail='instrument_id is required')
 
-    # Keep only the basename and map to assets/<instrument_id>.json
+    # Keep only the basename to prevent path traversal
     safe_id = Path(instrument_id.strip()).name
-    asset_path = ASSETS_DIR / f"{safe_id}.json"
-    if not asset_path.exists():
-        raise HTTPException(status_code=404, detail=f'Asset not found for instrument_id: {safe_id}')
-
+    
     try:
-        with open(asset_path, 'r') as f:
-            return json.load(f)
+        # Try to fetch from local database first
+        asset = db.select_asset(safe_id)
+        if asset is not None:
+            return asset
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f'Could not read asset file: {e}')
+        print(f"[API] Error fetching from database for {safe_id}: {e}")
+    
+    # Fallback: try cbonds API provider
+    try:
+        print(f"[API] Trying cbonds provider for {safe_id}")
+        cbonds_data = provider.fetch_from_cbonds(safe_id)
+        if cbonds_data is not None:
+            # Insert the fetched asset into the database
+            try:
+                row_id = db.insert_asset_json(cbonds_data)
+                print(f"[API] Inserted cbonds asset into database with id={row_id}")
+            except Exception as db_err:
+                print(f"[API] Warning: could not insert cbonds asset into database: {db_err}")
+                # Do not fail the lookup if DB insert fails; still return the data
+            return cbonds_data
+    except Exception as e:
+        print(f"[API] Error fetching from cbonds provider for {safe_id}: {e}")
+    
+    # If both local and provider failed, return 404
+    raise HTTPException(status_code=404, detail=f'Asset not found for instrument_id: {safe_id}')
 
 
 @app.get('/fetch_termsheet', tags=['Assets'], summary='Fetch one termsheet PDF by instrument_id')

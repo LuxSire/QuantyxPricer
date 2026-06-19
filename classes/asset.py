@@ -36,19 +36,24 @@ class Asset:
     def from_dict(cls, data: Dict[str, Any]) -> 'Asset':
         """Create an Asset instance from a dictionary.
         
+        Supports both native format and cbonds API format.
+        
         Args:
             data: Dictionary containing asset data
             
         Returns:
             Asset instance
         """
+        # Normalize cbonds format to standard format
+        normalized_data = cls._normalize_cbonds_format(data)
+        
         # Extract known fields
         known_fields = {f.name for f in cls.__dataclass_fields__.values()}
         
         asset_data = {}
         extra_fields = {}
         
-        for key, value in data.items():
+        for key, value in normalized_data.items():
             if key in known_fields and key != 'extra_fields':
                 asset_data[key] = value
             else:
@@ -58,6 +63,62 @@ class Asset:
             asset_data['extra_fields'] = extra_fields
             
         return cls(**asset_data)
+    
+    @classmethod
+    def _normalize_cbonds_format(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize cbonds API response format to internal format.
+        
+        Args:
+            data: cbonds API response or native format dictionary
+            
+        Returns:
+            Normalized dictionary
+        """
+        # If this looks like cbonds format (has isin_code, emitent_id, etc.)
+        if 'isin_code' in data or 'emitent_id' in data:
+            normalized = data.copy()
+            
+            # Map cbonds fields to standard fields
+            if 'isin_code' in data and 'instrument_id' not in data:
+                normalized['instrument_id'] = data['isin_code']
+            
+            if 'currency_name' in data and 'currency' not in data:
+                normalized['currency'] = data['currency_name']
+            
+            if 'emitent_name_eng' in data and 'issuer' not in data:
+                normalized['issuer'] = data['emitent_name_eng']
+            
+            if 'document_eng' in data and 'description' not in data:
+                normalized['description'] = data['document_eng']
+            
+            if 'maturity_date' in data and isinstance(data['maturity_date'], str):
+                # maturity_date from cbonds should already be ISO format
+                normalized['maturity_date'] = data['maturity_date']
+            
+            if 'offert_date' in data and 'issue_date' not in data:
+                normalized['issue_date'] = data['offert_date']
+            
+            if 'coupon_type_id' in data:
+                # cbonds coupon info
+                if 'coupon_type_name_eng' in data and 'coupon_structure' not in data:
+                    normalized['coupon_structure'] = data['coupon_type_name_eng']
+            
+            if 'curr_coupon_rate' in data:
+                try:
+                    normalized['fixed_coupon_rate'] = float(data['curr_coupon_rate'])
+                except (ValueError, TypeError):
+                    pass
+            
+            if 'nominal_price' in data:
+                try:
+                    normalized['par'] = float(data['nominal_price']) / 100.0 if float(data['nominal_price']) > 100 else float(data['nominal_price'])
+                except (ValueError, TypeError):
+                    pass
+            
+            return normalized
+        
+        # Return data as-is if not cbonds format
+        return data
     
     @classmethod
     def from_json_string(cls, json_str: str) -> 'Asset':

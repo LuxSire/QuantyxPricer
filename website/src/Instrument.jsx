@@ -108,68 +108,20 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
 
   // prepare values for three-column display
   const nestedKeys = new Set(['collateral', 'swap', 'csa', 'valuation_adjustments'])
-  // priceResult/ytm used in fallbacks must be defined before columns
+  // priceResult/ytm used in fallbacks
   const priceResult = priceEntry && priceEntry.result ? priceEntry.result : null
   const ytm = priceResult && (priceResult.ytm || priceResult.ytm_expected || priceResult.model_ytm_to_maturity || priceResult.yield_to_maturity || priceResult.model_ytm_to_maturity)
   const pp = priceResult && priceResult.price_pct ? priceResult.price_pct : {}
   const colPV = pp.pv_note ?? (priceResult && (priceResult.pv_note ?? priceResult.selected_npv))
   const colWorst = pp.pv_note_to_worst ?? pp.pv_note_to_worst_call ?? (priceResult && (priceResult.npv_to_worst_call || priceResult.npv_to_worst))
   const colMat = pp.pv_note_to_maturity ?? (priceResult && (priceResult.npv_to_maturity || priceResult.npv_to_maturity))
-  const firstCol = {
-    isin: isin,
-    model: data.model || data.pricing_model || null,
-    denomination: data.denomination || data.face_amount || data.nominal || null,
-    reference_cds_curve_name: data.reference_cds_curve_name || data['reference_cds_curve_name'] || data['reference_cds:curve:name'] || (data.reference_cds && data.reference_cds.curve && data.reference_cds.curve.name) || (data.reference && data.reference.cds && data.reference.cds.curve && data.reference.cds.curve.name) || null,
-    reference_entity: data.reference_entity || (data.terms && data.terms.reference_entity) || null,
-    reference_entity_seniority: data.reference_entity_seniority || (data.terms && data.terms.reference_entity_seniority) || null,
-    issuer: data.issuer || (data.terms && data.terms.issuer) || data.issuer_name || null,
-    callable_type: data.callable_type || data.callableType || (data.terms && data.terms.callable_type) || null,
-    ['call:price']: data['call:price'] || data.call_price || data.callPrice || (data.terms && (data.terms['call:price'] || data.terms.call_price)) || null,
-    valuationmode: data.valuationmode || data.valuation_mode || (priceResult && priceResult.valuation_mode) || null,
-    coupon_structure: data.coupon_structure || data.couponStructure || (data.terms && data.terms.coupon_structure) || null,
-    typology: data.typology || data.instrument_type || (data.terms && data.terms.underlying_type) || data.type || null,
-    bond_structure: data.bond_structure || (data.terms && data.terms.pricing_formula_type) || data.structure || null,
-    trading_type: data.trading_type || (data.terms && data.terms.trading_type) || null,
-    currency: data.currency || (data.terms && data.terms.payoff_currency) || data.payoff_currency || null,
-    clearing_settlement: data.clearing_settlement || data.clearingSettlement || (data.terms && data.terms.clearing_settlement) || null,
-    description: data.description || data.name || null
-  }
-  const secondCol = {
-    evaluation_date: data.evaluation_date || data.eval_date || null,
-    issue_date: data.issue_date || data.issuance_date || (data.terms && data.terms.issue_date) || null,
-    maturity_date: data.maturity_date || (data.terms && data.terms.maturity_date) || (data.terms && data.terms.observation_dates && data.terms.observation_dates.slice(-1)[0]) || null,
-    first_coupon_date: data.first_coupon_date || (data.terms && data.terms.first_coupon_date) || null,
-    coupon_frequency: data.coupon_frequency || (data.terms && data.terms.coupon_frequency) || null,
-    discount_curve_name: data.discount_curve_name || data.dicount_curve_name || (priceResult && (priceResult.discount_curve_name || priceResult.discount_curve)) || (data.terms && data.terms.discount_curve_name) || null,
-    settlement_currency: data.settlement_currency || (data.terms && data.terms.settlement_currency) || null,
-    negotiation_currency: data.negotiation_currency || (data.terms && data.terms.negotiation_currency) || null,
-    first_day_of_trading: data.first_day_of_trading || (data.terms && data.terms.first_day_of_trading) || null,
-    date_generation: data.date_generation || (data.terms && data.terms.date_generation) || null,
-    calendar: data.calendar || (data.terms && data.terms.calendar) || null,
-    day_count_convention: data.day_count_convention || data.day_count || (data.terms && data.terms.day_count_convention) || null,
-    accrual_day_count: data.accrual_day_count || (data.terms && data.terms.accrual_day_count) || null
-  }
-  // YTM/PV come from prices.json entry when available
-  const thirdCol = {
-    amount_issued: data.amount_issued || data.issuance_amount || data.issue_amount || (data.terms && data.terms.amount_issued) || null,
-    lot_size: data.lot_size || data.lot || (data.terms && data.terms.lot_size) || null,
-    note_notional: data.note_notional || data.notional || (data.terms && data.terms.note_notional) || null,
-    credit_spread_bp: data.credit_spread_bp || data.credit_spread || data.spread_bp || (data.terms && data.terms.credit_spread_bp) || null,
-    par: data.par || data.face_value || (data.terms && data.terms.par) || null,
-    period_coupon_rate: data.period_coupon_rate || data.period_rate || data['period:coupon:rate'] || null,
-    ["recovery:Rate"]: data['recovery:Rate'] || (data.terms && data.terms['recovery:Rate']) || data.recovery_rate || null,
-    annual_coupon_rate: data.annual_coupon_rate || data.coupon_rate || (data.terms && data.terms.coupon_rate) || null,
-    market: data.market || (data.terms && data.terms.market) || null,
-    outstanding: data.outstanding || data.outstanding_amount || (data.terms && data.terms.outstanding) || null,
-    redemption: data.redemption || (data.terms && data.terms.redemption) || data.redemption_formula_type || null,
-    fixed_coupon_rate: data.fixed_coupon_rate || data.coupon_rate || (data.terms && data.terms.fixed_coupon_rate) || null,
-    PV: colPV || null,
-    PV_to_worst: colWorst || null,
-    PV_to_maturity: colMat || null,
-    ytm: ytm,
-    pv_note: priceResult && (priceResult.pv_note || (priceResult.note_leg && priceResult.note_leg.pv_note) || null),
-    pv_note_coupons: priceResult && (priceResult.pv_note_coupons || (priceResult.note_leg && priceResult.note_leg.pv_note_coupons) || (priceResult.price_pct && priceResult.price_pct.pv_note_coupons) || null)
-  }
+
+  // Dynamically distribute all non-null fields from data across three columns
+  const allEntries = Object.entries(data).filter(([k, v]) => v != null && v !== '' && (typeof v !== 'object' || Object.keys(v).length > 0))
+  const colSize = Math.ceil(allEntries.length / 3)
+  const firstCol = Object.fromEntries(allEntries.slice(0, colSize))
+  const secondCol = Object.fromEntries(allEntries.slice(colSize, colSize * 2))
+  const thirdCol = Object.fromEntries(allEntries.slice(colSize * 2))
 
   const toFiniteNumber = (value) => {
     const n = Number(value)
@@ -366,11 +318,9 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
     return rawValue
   }
   // build table rows: each row contains up to three field/value pairs (col pairs: 1-2, 3-4, 5-6)
-  const entries1 = Object.entries(firstCol)
-  const entries2 = Object.entries(secondCol)
-  const entries3 = Object.entries(thirdCol)
-  const usedKeys = new Set([...Object.keys(firstCol), ...Object.keys(secondCol), ...Object.keys(thirdCol)])
-  const otherEntries = Object.entries(data).filter(([k]) => !usedKeys.has(k))
+  const entries1 = Object.entries(firstCol).filter(([k, v]) => v != null && v !== '')
+  const entries2 = Object.entries(secondCol).filter(([k, v]) => v != null && v !== '')
+  const entries3 = Object.entries(thirdCol).filter(([k, v]) => v != null && v !== '')
   const maxLen = Math.max(entries1.length, entries2.length, entries3.length)
   const rows = []
   for (let i = 0; i < maxLen; i++) {
@@ -381,7 +331,7 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
     ])
   }
 
-  const allDisplayedEntries = [...entries1, ...entries2, ...entries3, ...otherEntries]
+  const allDisplayedEntries = [...entries1, ...entries2, ...entries3]
 
   const startEdit = () => {
     const initial = {}
@@ -587,14 +537,6 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
           ))}
         </tbody>
       </table>
-      <div className="other-fields" style={{marginTop: '24px'}}>
-        <h3>Other Fields</h3>
-        <dl>
-          {otherEntries.map(([k, v]) => (
-            <div key={k} className="detail-row"><dt className="detail-key">{k}</dt><dd className="detail-value">{editMode ? renderEditor(k, v) : (v == null ? '-' : renderValue(k, v))}</dd></div>
-          ))}
-        </dl>
-      </div>
       {(snack.visible || snackHiding) && (
         <div className={`snackbar snackbar--${snack.type || 'info'} ${snackHiding ? 'hide' : 'show'}`}>{snack.message}</div>
       )}

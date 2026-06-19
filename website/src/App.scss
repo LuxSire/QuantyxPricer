@@ -61,6 +61,8 @@ tr:nth-child(odd) { background: var(--row-odd); }
 /* Input and datalist */
 input, select, textarea { background: #0b1116; color: var(--text); border: 1px solid var(--border); padding: 6px 8px }
 input::placeholder { color: rgba(255,255,255,0.25) }
+.lookup-result { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); padding: 12px; border-radius: 6px; max-height: 280px; overflow: auto; }
+.lookup-result pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--text); font-size: 13px; }
 
 .clear-btn {
   background: var(--accent);
@@ -98,9 +100,15 @@ input::placeholder { color: rgba(255,255,255,0.25) }
   color: #ffffff;
 }
 
+.clear-btn--cancel {
+  background: rgba(255,255,255,0.08);
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
 /* File uploader modal */
-.uploader-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:50 }
-.uploader-modal { background: var(--panel); padding: 18px; border-radius: 8px; width: 480px; max-width: 90%; border: 1px solid rgba(255,255,255,0.03) }
+.uploader-backdrop, .lookup-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:50 }
+.uploader-modal, .lookup-modal { background: var(--panel); padding: 18px; border-radius: 8px; width: 480px; max-width: 90%; border: 1px solid rgba(255,255,255,0.03) }
 .dropzone { border: 2px dashed rgba(255,255,255,0.04); padding: 24px; text-align: center; border-radius: 6px }
 .dropzone.dragover { background: rgba(255,255,255,0.02); border-color: rgba(212,175,55,0.6) }
 .dropzone input[type=file] { margin-top: 8px }

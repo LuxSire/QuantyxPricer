@@ -73,6 +73,52 @@ def insert_asset(payload: Union[Dict[str, Any], str]) -> int:
         conn.close()
 
 
+def insert_prices(payload: Union[Dict[str, Any], list, str]) -> int:
+    """Insert price JSON by calling stored procedure insert_prices.
+
+    Stored procedure contract:
+      insert_prices(IN p_json JSON, OUT p_id BIGINT)
+
+    Returns:
+      Inserted row id (p_id)
+    """
+    if isinstance(payload, (dict, list)):
+        payload_json = json.dumps(payload, ensure_ascii=False)
+    elif isinstance(payload, str):
+        payload_json = payload
+    else:
+        raise TypeError('payload must be a dict, list, or JSON string')
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        try:
+            cursor.callproc('insert_prices', [payload_json])
+            conn.commit()
+            inserted_id = cursor.lastrowid or 0
+        finally:
+            cursor.close()
+
+        return int(inserted_id)
+    finally:
+        conn.close()
+
+
+def _decode_json_row(row: Dict[str, Any], json_field: str = 'json') -> Dict[str, Any]:
+    raw = row.get(json_field)
+    if raw is None:
+        obj = {}
+    elif isinstance(raw, (bytes, bytearray)):
+        obj = json.loads(raw.decode('utf-8'))
+    else:
+        obj = json.loads(raw)
+    if 'my_row_id' in row:
+        obj['_id'] = row['my_row_id']
+    if 'code' in row:
+        obj['_code'] = row['code']
+    return obj
+
+
 def select_assets() -> list[Dict[str, Any]]:
     """Return all rows from the assets table as a list of parsed JSON dicts.
 
@@ -89,19 +135,7 @@ def select_assets() -> list[Dict[str, Any]]:
         finally:
             cursor.close()
 
-        result = []
-        for row in rows:
-            raw = row.get('json')
-            if raw is None:
-                asset = {}
-            elif isinstance(raw, (bytes, bytearray)):
-                asset = json.loads(raw.decode('utf-8'))
-            else:
-                asset = json.loads(raw)
-            asset['_id'] = row['my_row_id']
-            asset['_code'] = row['code']
-            result.append(asset)
-        return result
+        return [_decode_json_row(row) for row in rows]
     finally:
         conn.close()
 
@@ -124,15 +158,61 @@ def select_asset(code: str) -> Optional[Dict[str, Any]]:
         if not row:
             return None
 
-        raw = row.get('json')
-        if raw is None:
-            asset = {}
-        elif isinstance(raw, (bytes, bytearray)):
-            asset = json.loads(raw.decode('utf-8'))
-        else:
-            asset = json.loads(raw)
-        asset['_id'] = row['my_row_id']
-        asset['_code'] = row['code']
-        return asset
+        return _decode_json_row(row)
     finally:
         conn.close()
+
+
+def select_prices() -> list[Dict[str, Any]]:
+    """Return all rows from the prices table as a list of parsed JSON dicts."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT my_row_id, code, json FROM prices')
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+
+        return [_decode_json_row(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def select_price(code: str) -> Optional[Dict[str, Any]]:
+    """Return the first matching row from the prices table as a parsed JSON dict."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT my_row_id, code, json FROM prices WHERE code=%s LIMIT 1', (code,))
+            row = cursor.fetchone()
+        finally:
+            cursor.close()
+
+        if not row:
+            return None
+
+        return _decode_json_row(row)
+    finally:
+        conn.close()
+
+
+def insert_prices_from_file(file_path: Union[str, Path]) -> int:
+    """Load JSON price data from a file and call insert_prices."""
+    path = Path(file_path)
+    with path.open('r', encoding='utf-8') as f:
+        payload = json.load(f)
+    return insert_prices(payload)
+
+
+if __name__ == '__main__':
+    import sys
+
+    if len(sys.argv) != 2:
+        print('Usage: python api/db.py <path-to-prices-json>')
+        sys.exit(1)
+
+    file_path = sys.argv[1]
+    inserted_id = insert_prices_from_file(file_path)
+    print(f'Inserted prices row id: {inserted_id}')

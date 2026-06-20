@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
 from pathlib import Path
@@ -12,13 +18,9 @@ import subprocess, sys
 import threading
 import uuid
 from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
-
-try:
-    from . import db
-    from . import provider
-except ImportError:
-    import db
-    import provider
+from classes import Price, Prices
+import db
+import provider
 
 app = FastAPI(
     title="Quantyx Pricer API",
@@ -59,6 +61,32 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # Simple in-memory job registry for background tasks (non-persistent)
 JOBS = {}
 JOBS_LOCK = threading.Lock()
+
+# Cached assets and prices loaded at startup
+assets = []
+prices = Prices()
+
+
+@app.on_event('startup')
+async def initialize_data():
+    global assets, prices
+    try:
+        assets = await fetch_assets()
+        print(f"[API] Loaded {len(assets) if isinstance(assets, list) else 0} assets from database")
+    except Exception as e:
+        print(f"[API] Warning: could not load assets at startup: {e}")
+        assets = []
+
+    try:
+        loaded_prices = await fetch_prices()
+        if isinstance(loaded_prices, list) or isinstance(loaded_prices, dict):
+            prices = Prices.from_data(loaded_prices)
+        else:
+            prices = Prices()
+        print(f"[API] Loaded {len(prices)} prices from database")
+    except Exception as e:
+        print(f"[API] Warning: could not load prices at startup: {e}")
+        prices = Prices()
 
 
 def _write_log(log_path, obj):
@@ -353,6 +381,26 @@ async def fetch_asset(instrument_id: str):
     
     # If both local and provider failed, return 404
     raise HTTPException(status_code=404, detail=f'Asset not found for instrument_id: {safe_id}')
+
+
+@app.get('/fetch_assets', tags=['Assets'], summary='Fetch all assets from MySQL')
+async def fetch_assets():
+    try:
+        assets = db.select_assets()
+        return assets
+    except Exception as e:
+        print(f"[API] Error fetching assets from database: {e}")
+        raise HTTPException(status_code=500, detail='Could not fetch assets from database')
+
+
+@app.get('/fetch_prices', tags=['Pricing'], summary='Fetch all prices from MySQL')
+async def fetch_prices():
+    try:
+        prices = db.select_prices()
+        return prices
+    except Exception as e:
+        print(f"[API] Error fetching prices from database: {e}")
+        raise HTTPException(status_code=500, detail='Could not fetch prices from database')
 
 
 @app.get('/fetch_termsheet', tags=['Assets'], summary='Fetch one termsheet PDF by instrument_id')

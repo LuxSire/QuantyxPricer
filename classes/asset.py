@@ -1,5 +1,5 @@
 import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Union
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -30,6 +30,7 @@ class Asset:
     redemption: Optional[float] = None
     call_price: Optional[float] = None
     target_price: Optional[float] = None
+    underlying: Optional['Asset'] = None
     extra_fields: Dict[str, Any] = field(default_factory=dict)
     
     @classmethod
@@ -54,12 +55,10 @@ class Asset:
         extra_fields = {}
         
         for key, value in normalized_data.items():
-            if key in known_fields and key != 'extra_fields':
+            if key == 'underlying' and isinstance(value, dict):
+                asset_data['underlying'] = cls.from_dict(value)
+            elif key in known_fields and key not in {'extra_fields', 'underlying'}:
                 asset_data[key] = value
-            else:
-                extra_fields[key] = value
-        
-        if extra_fields:
             asset_data['extra_fields'] = extra_fields
             
         return cls(**asset_data)
@@ -156,7 +155,11 @@ class Asset:
         result = {}
         for field_name in self.__dataclass_fields__:
             value = getattr(self, field_name)
-            if field_name != 'extra_fields':
+            if field_name == 'extra_fields':
+                continue
+            if field_name == 'underlying' and isinstance(value, Asset):
+                result[field_name] = value.to_dict()
+            else:
                 result[field_name] = value
         
         # Merge extra fields
@@ -165,6 +168,10 @@ class Asset:
         
         return result
     
+    def __post_init__(self):
+        if self.instrument_id:
+            self.__class__.assets[self.instrument_id] = self
+
     def to_json(self, indent: Optional[int] = 2) -> str:
         """Convert Asset to JSON string.
         
@@ -175,3 +182,78 @@ class Asset:
             JSON string representation
         """
         return json.dumps(self.to_dict(), indent=indent, default=str)
+
+
+class Assets:
+    """Dictionary-like collection of Asset objects, keyed by instrument_id."""
+
+    def __init__(self, assets_dict: Optional[Dict[str, Asset]] = None):
+        self._assets: Dict[str, Asset] = assets_dict or {}
+
+    @classmethod
+    def from_json_file(cls, filepath: str) -> 'Assets':
+        """Load assets from a JSON file containing a list or dict of asset records."""
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return cls.from_data(data)
+
+    @classmethod
+    def from_list(cls, data: List[Dict[str, Any]]) -> 'Assets':
+        assets_dict: Dict[str, Asset] = {}
+        for item in data:
+            if isinstance(item, dict):
+                asset = Asset.from_dict(item)
+                if asset.instrument_id:
+                    assets_dict[asset.instrument_id] = asset
+        return cls(assets_dict)
+
+    @classmethod
+    def from_data(cls, data: Union[List[Dict[str, Any]], Dict[str, Any]]) -> 'Assets':
+        if isinstance(data, list):
+            return cls.from_list(data)
+
+        assets_dict: Dict[str, Asset] = {}
+        for key, item in data.items():
+            if isinstance(item, dict):
+                asset = Asset.from_dict(item)
+                assets_dict[asset.instrument_id or key] = asset
+            elif isinstance(item, Asset):
+                assets_dict[key] = item
+        return cls(assets_dict)
+
+    def __getitem__(self, instrument_id: str) -> Asset:
+        return self._assets[instrument_id]
+
+    def __setitem__(self, instrument_id: str, asset: Asset) -> None:
+        self._assets[instrument_id] = asset
+
+    def __contains__(self, instrument_id: str) -> bool:
+        return instrument_id in self._assets
+
+    def __len__(self) -> int:
+        return len(self._assets)
+
+    def __iter__(self):
+        return iter(self._assets)
+
+    def get(self, instrument_id: str, default: Optional[Asset] = None) -> Optional[Asset]:
+        return self._assets.get(instrument_id, default)
+
+    def keys(self):
+        return self._assets.keys()
+
+    def values(self):
+        return self._assets.values()
+
+    def items(self):
+        return self._assets.items()
+
+    def to_list(self) -> List[Dict[str, Any]]:
+        return [asset.to_dict() for asset in self._assets.values()]
+
+    def to_dict(self) -> Dict[str, Dict[str, Any]]:
+        return {iid: asset.to_dict() for iid, asset in self._assets.items()}
+
+    def to_json(self, indent: Optional[int] = 2, as_list: bool = True) -> str:
+        data = self.to_list() if as_list else self.to_dict()
+        return json.dumps(data, indent=indent, default=str)

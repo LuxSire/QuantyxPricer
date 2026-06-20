@@ -67,21 +67,32 @@ class Prices:
         """
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
-        prices_dict = {}
-        if isinstance(data, list):
-            for item in data:
+        return cls.from_data(data)
+
+    @classmethod
+    def from_list(cls, data: List[Dict[str, Any]]) -> 'Prices':
+        """Create Prices from a list of dictionaries."""
+        prices_dict: Dict[str, Price] = {}
+        for item in data:
+            if isinstance(item, dict):
                 price = Price.from_dict(item)
                 prices_dict[price.instrument_id] = price
-        elif isinstance(data, dict):
-            # If already a dict, assume keys are instrument_ids
+        return cls(prices_dict)
+
+    @classmethod
+    def from_data(cls, data: Union[List[Dict[str, Any]], Dict[str, Any]]) -> 'Prices':
+        """Create Prices from either a list or dict payload."""
+        if isinstance(data, list):
+            return cls.from_list(data)
+
+        prices_dict: Dict[str, Price] = {}
+        if isinstance(data, dict):
             for key, item in data.items():
                 if isinstance(item, dict):
                     price = Price.from_dict(item)
-                    prices_dict[price.instrument_id] = price
+                    prices_dict[price.instrument_id or key] = price
                 elif isinstance(item, Price):
                     prices_dict[key] = item
-        
         return cls(prices_dict)
     
     def __getitem__(self, instrument_id: str) -> Price:

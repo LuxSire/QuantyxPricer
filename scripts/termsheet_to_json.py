@@ -15,10 +15,11 @@ import re
 import json
 from pathlib import Path
 import argparse
+from typing import Optional
 
 try:
     from PyPDF2 import PdfReader
-except Exception:
+except ImportError:
     PdfReader = None
 
 
@@ -35,10 +36,35 @@ def extract_text_from_pdf(path: Path) -> str:
     return "\n".join(texts)
 
 
+def normalize_date(day: str, month: str, year: str) -> str:
+    months = {
+        'january': '01','february':'02','march':'03','april':'04','may':'05','june':'06',
+        'july':'07','august':'08','september':'09','october':'10','november':'11','december':'12'
+    }
+    if month.isdigit():
+        mo = int(month)
+    else:
+        mo = int(months.get(month.lower(), '01'))
+    if len(year) == 2:
+        year = '20' + year
+    return f"{int(year):04d}-{mo:02d}-{int(day):02d}"
+
+
+def find_text_after_keyword(text: str, keyword: str) -> Optional[str]:
+    lower = text.lower()
+    idx = lower.find(keyword.lower())
+    if idx < 0:
+        return None
+    excerpt = text[idx:idx + 250]
+    dates = find_dates(excerpt)
+    return dates[0] if dates else None
+
+
 ISIN_RE = re.compile(r"\b[A-Z]{2}[A-Z0-9]{9}\d\b")
 PERCENT_RE = re.compile(r"(\d{1,2}(?:[\.,]\d+)?)\s?%")
 DATE_RE1 = re.compile(r"(\d{1,2})[\-/](\d{1,2})[\-/](\d{2,4})")
 DATE_RE2 = re.compile(r"(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})", re.I)
+DATE_RE3 = re.compile(r"(\d{1,2})\s+([A-Za-z]{3})\.?\s+(\d{2,4})")
 CURRENCY_RE = re.compile(r"\b(EUR|USD|GBP|CHF|JPY|AUD|CAD)\b")
 
 
@@ -69,12 +95,15 @@ def find_dates(text: str):
     for m in DATE_RE1.finditer(text):
         d, mo, y = m.groups()
         y = y if len(y) == 4 else ('20' + y)
-        dates.append(f"{int(d):02d}-{int(mo):02d}-{y}")
+        dates.append(f"{int(y):04d}-{int(mo):02d}-{int(d):02d}")
     for m in DATE_RE2.finditer(text):
         d, mo, y = m.groups()
         months = { 'january': '01','february':'02','march':'03','april':'04','may':'05','june':'06','july':'07','august':'08','september':'09','october':'10','november':'11','december':'12'}
         mo_n = months[mo.lower()]
-        dates.append(f"{int(d):02d}-{mo_n}-{y}")
+        dates.append(f"{int(y):04d}-{mo_n}-{int(d):02d}")
+    for m in DATE_RE3.finditer(text):
+        d, mo, y = m.groups()
+        dates.append(normalize_date(d, mo, y))
     return dates
 
 
@@ -88,22 +117,17 @@ def heuristic_field_from_text(text: str):
     maturity = None
     issue = None
     lname = text.lower()
-    # naive: look for 'maturity' or 'matures' and nearest date
-    for key in ('maturity', 'matures', 'maturity date'):
-        idx = lname.find(key)
-        if idx >= 0:
-            # take dates after this index
-            after = find_dates(text[idx:])
-            if after:
-                maturity = after[0]
-                break
-    for key in ('issue date', 'issued on', 'issue'):
-        idx = lname.find(key)
-        if idx >= 0:
-            after = find_dates(text[idx:])
-            if after:
-                issue = after[0]
-                break
+    # look for obvious phrases and nearest dates
+    for key in ('maturity date', 'maturity', 'matures', 'redemption date', 'maturity / redemption'):
+        found = find_text_after_keyword(text, key)
+        if found:
+            maturity = found
+            break
+    for key in ('issue date', 'issued on', 'issue', 'offer date', 'offert date', 'subscription date'):
+        found = find_text_after_keyword(text, key)
+        if found:
+            issue = found
+            break
 
     # fallback: first/last date
     if not issue and dates:
@@ -124,9 +148,10 @@ def heuristic_field_from_text(text: str):
     if 'credit-linked' in lname or 'cln' in lname or 'credit linked note' in lname:
         model = 'cln'
 
+    description = first_line or text.splitlines()[0].strip() if text.splitlines() else None
     return {
         'instrument_id': isin,
-        'description': first_line,
+        'description': description,
         'currency': currency,
         'fixed_coupon_rate': coupon,
         'issue_date': issue,

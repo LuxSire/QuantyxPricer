@@ -10,7 +10,7 @@ class Asset:
     
     instrument_id: str
     currency: str
-    model: str
+    model: Optional[str] = None
     description: str = ""
     evaluation_date: Optional[str] = None
     issue_date: Optional[str] = None
@@ -59,7 +59,11 @@ class Asset:
                 asset_data['underlying'] = cls.from_dict(value)
             elif key in known_fields and key not in {'extra_fields', 'underlying'}:
                 asset_data[key] = value
-            asset_data['extra_fields'] = extra_fields
+            else:
+                extra_fields[key] = value  # ← unknown fields go here
+
+        asset_data['extra_fields'] = extra_fields  # ← moved OUTSIDE the loop
+
             
         return cls(**asset_data)
     
@@ -168,10 +172,6 @@ class Asset:
         
         return result
     
-    def __post_init__(self):
-        if self.instrument_id:
-            self.__class__.assets[self.instrument_id] = self
-
     def to_json(self, indent: Optional[int] = 2) -> str:
         """Convert Asset to JSON string.
         
@@ -184,6 +184,9 @@ class Asset:
         return json.dumps(self.to_dict(), indent=indent, default=str)
 
 
+
+
+@dataclass
 class Assets:
     """Dictionary-like collection of Asset objects, keyed by instrument_id."""
 
@@ -201,10 +204,23 @@ class Assets:
     def from_list(cls, data: List[Dict[str, Any]]) -> 'Assets':
         assets_dict: Dict[str, Asset] = {}
         for item in data:
-            if isinstance(item, dict):
+            if not isinstance(item, dict):
+                print(f"[Assets] Skipping non-dict item: {type(item)}")
+                continue
+            instrument_id = item.get('instrument_id') or item.get('isin') or item.get('isin_code')
+            if not instrument_id:
+                print(f"[Assets] Skipping asset missing instrument_id, keys: {list(item.keys())}")
+                continue
+            if not item.get('model'):
+                print(f"[Assets] Skipping {instrument_id}: missing model field")
+                continue
+            try:
                 asset = Asset.from_dict(item)
-                if asset.instrument_id:
-                    assets_dict[asset.instrument_id] = asset
+                assets_dict[asset.instrument_id] = asset
+                print(f"[Assets] Loaded {asset.instrument_id}")
+            except Exception as e:
+                print(f"[Assets] Failed to load {instrument_id}: {type(e).__name__}: {e}")
+
         return cls(assets_dict)
 
     @classmethod

@@ -29,9 +29,7 @@ export default function App() {
     }
     return ''
   })()
-  const [rows, setRows] = useState(null)
   const [missingInstrumentIds, setMissingInstrumentIds] = useState([])
-  const [error, setError] = useState(null)
   const [pricingIds, setPricingIds] = useState([])
   const [snack, setSnack] = useState({ visible: false, message: '', type: 'info' })
   const [snackHiding, setSnackHiding] = useState(false)
@@ -44,32 +42,7 @@ export default function App() {
     return null
   })
   
-  const { pricingAll, updatingCurves, onPriceAll: createOnPriceAll, onUpdateCurves: createOnUpdateCurves } = usePrices(apiBase)
-
-  useEffect(() => {
-    const endpoint = apiBase ? `${apiBase}/prices` : '/prices'
-    let mounted = true
-
-    async function fetchOne() {
-      try {
-        const r = await fetch(endpoint)
-        if (!r.ok) {
-          if (mounted) setError('Could not fetch prices from API')
-          return
-        }
-        const data = await r.json()
-        if (!mounted) return
-        setRows(data)
-        return
-      } catch {
-        // handled by error set below
-      }
-      if (mounted) setError('Could not fetch prices from API')
-    }
-
-    fetchOne()
-    return () => { mounted = false }
-  }, [apiBase])
+  const { rows, error, refreshPrices, pricingAll, updatingCurves, onPriceAll, onUpdateCurves, pricing_single_asset } = usePrices(apiBase)
 
   useEffect(() => {
     let mounted = true
@@ -122,46 +95,19 @@ export default function App() {
     }
   }, [snack.visible, snackHiding])
 
-  const refreshPrices = async () => {
-    const endpoint = apiBase ? `${apiBase}/prices` : '/prices'
-    try {
-      const r2 = await fetch(endpoint)
-      if (!r2.ok) return
-      const data2 = await r2.json()
-      setRows(data2)
-    } catch {
-      // no-op
-    }
-  }
-
   const priceOne = async (id) => {
     if (!id) {
       setSnack({ visible: true, message: 'No instrument id available', type: 'error' })
       return
     }
     setPricingIds(prev => [...prev, id])
-    const payload = { InstrumentId: id }
-    console.debug('[UI] pricing request', payload)
+    // First download market data from providers and insert into DB
     try {
-      const resp = await fetch((apiBase ? `${apiBase}` : '') + '/price', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      console.debug('[UI] pricing response status', resp.status)
-      if (!resp.ok) {
-        let txt = ''
-        try { txt = await resp.text() } catch { txt = '<no body>' }
-        console.error('[UI] pricing failed', resp.status, txt)
-        setSnack({ visible: true, message: `Pricing failed: ${txt}`, type: 'error' })
-        setPricingIds(prev => prev.filter(x => x !== id))
-        return
-      }
-      const j = await resp.json()
-      console.debug('[UI] pricing result', j)
-      setPricingIds(prev => prev.filter(x => x !== id))
-      setSnack({ visible: true, message: `Pricing succeeded for ${id}`, type: 'success' })
-      await refreshPrices()
-    } catch (err) {
-      setPricingIds(prev => prev.filter(x => x !== id))
-      setSnack({ visible: true, message: `Error calling price API: ${String(err)}`, type: 'error' })
+      await pricing_single_asset(id, setSnack)
+    } catch (e) {
+      console.error('pricing_single_asset error', e)
     }
+
   }
 
   if (error) return <div className="error">Error: {error}</div>

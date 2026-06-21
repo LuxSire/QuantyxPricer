@@ -70,7 +70,7 @@ def fetch_latest_ecb_observation(series_id):
         return None, None
 
 
-def update_swap_curves(swap_curves_path=None, verbose=True):
+def update_swap_curves_ecb(swap_curves_path=None, verbose=True):
     """
     Read swap_curves.json, update rates for curves with ecb_name fields,
     and write back.
@@ -150,4 +150,4 @@ if __name__ == "__main__":
     project_root = script_dir.parent
     swap_curves_path = project_root / "curves" / "swap_curves.json"
     
-    update_swap_curves(swap_curves_path, verbose=True)
+    update_swap_curves_ecb(swap_curves_path, verbose=True)

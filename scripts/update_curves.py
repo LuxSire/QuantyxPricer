@@ -5,9 +5,8 @@
 import argparse
 from pathlib import Path
 
-from update_swap_curves_ecb import update_swap_curves
-from update_swap_curves_fed import update_swap_curves_fed
-
+from . import update_fed
+from . import update_ecb
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -32,13 +31,13 @@ def main():
     curve_file = Path(args.curve_file) if args.curve_file else None
     # Update ECB curves first
     try:
-        update_swap_curves(curve_file, verbose=not args.quiet)
+        update_ecb(curve_file, verbose=not args.quiet)
     except Exception as e:
         print(f"Error running ECB updater: {e}")
 
     # Then update USD OIS from Fed (SOFR)
     try:
-        update_swap_curves_fed(curve_file, verbose=not args.quiet)
+        update_fed(curve_file, verbose=not args.quiet)
     except Exception as e:
         print(f"Error running Fed updater: {e}")
 

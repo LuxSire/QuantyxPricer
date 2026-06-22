@@ -208,21 +208,24 @@ export function usePrices(apiBase) {
       if (setSnack) setSnack({ visible: true, message: 'instrumentId required', type: 'error' })
       return null
     }
+
+    // Download market data first (best-effort, do not block pricing)
     try {
       if (setSnack) setSnack({ visible: true, message: `Downloading market data for ${instrumentId}...`, type: 'info' })
       const downloaded = await downloadPrice(instrumentId, setSnack)
-      if (!downloaded) {
-        if (setSnack) setSnack({ visible: true, message: `No market data for ${instrumentId}`, type: 'error' })
-        return null
+      if (downloaded) {
+        const payload = downloaded.provider_result || downloaded
+        await insertPrices(payload, setSnack)
+      } else {
+        if (setSnack) setSnack({ visible: true, message: `No market data for ${instrumentId}, proceeding to price...`, type: 'info' })
       }
-      const payload = downloaded.provider_result || downloaded
-      const res = await insertPrices(payload, setSnack)
-
     } catch (err) {
-      if (setSnack) setSnack({ visible: true, message: `Error pricing single asset: ${String(err)}`, type: 'error' })
-      console.error('pricing_single_asset error', err)
-      return null
+      if (setSnack) setSnack({ visible: true, message: `Market data download failed, proceeding to price: ${String(err)}`, type: 'info' })
+      console.error('pricing_single_asset market data error', err)
+      // Do not return - continue to pricing step below
     }
+
+    // Always call /price regardless of market data result
     const payload = { instrument_id: instrumentId }
     console.debug('[UI] pricing request', payload)
     try {

@@ -56,7 +56,12 @@ class Asset:
         
         for key, value in normalized_data.items():
             if key == 'underlying' and isinstance(value, dict):
-                asset_data['underlying'] = cls.from_dict(value)
+                # Create an Asset instance for the underlying asset
+                underlying_data = dict(value)
+                # Use ticker as instrument_id if available
+                if 'ticker' in underlying_data and 'instrument_id' not in underlying_data:
+                    underlying_data['instrument_id'] = underlying_data['ticker']
+                asset_data['underlying'] = cls.from_dict(underlying_data)
             elif key in known_fields and key not in {'extra_fields', 'underlying'}:
                 asset_data[key] = value
             else:
@@ -233,6 +238,7 @@ class Assets:
             if isinstance(item, dict):
                 asset = Asset.from_dict(item)
                 assets_dict[asset.instrument_id or key] = asset
+
             elif isinstance(item, Asset):
                 assets_dict[key] = item
         return cls(assets_dict)

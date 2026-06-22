@@ -26,9 +26,16 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
   const [editMode, setEditMode] = useState(false)
   const [draftValues, setDraftValues] = useState({})
   const [saving, setSaving] = useState(false)
+  const mandatoryFields = {
+    instrument_id: data?.instrument_id || isin || '',
+    model: data?.model || '',
+    currency: data?.currency || '',
+  }
+  const [newKey, setNewKey] = useState('')
+  const [newValue, setNewValue] = useState('')
   const [snack, setSnack] = useState({ visible: false, message: '', type: 'info' })
   const [snackHiding, setSnackHiding] = useState(false)
-  const { fetchAsset } = useAsset(apiBase)
+  const { fetchAsset, updateAsset } = useAsset(apiBase)
 
   useEffect(() => {
     let mounted = true
@@ -41,7 +48,14 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
         const j = await fetchAsset(isin)
         if (!mounted) return
         if (j) {
-          setData(j)
+          // Ensure mandatory fields are always present
+          const ensured = {
+            ...j,
+            instrument_id: j.instrument_id || isin,
+            model: j.model || '',
+            currency: j.currency || '',
+          }
+          setData(ensured)
         } else {
           setError('Could not fetch asset JSON for ' + isin)
         }
@@ -110,14 +124,16 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
   const nestedKeys = new Set(['collateral', 'swap', 'csa', 'valuation_adjustments'])
   // priceResult/ytm used in fallbacks
   const priceResult = priceEntry && priceEntry.result ? priceEntry.result : null
-  const ytm = priceResult && (priceResult.ytm || priceResult.ytm_expected || priceResult.model_ytm_to_maturity || priceResult.yield_to_maturity || priceResult.model_ytm_to_maturity)
   const pp = priceResult && priceResult.price_pct ? priceResult.price_pct : {}
   const colPV = pp.pv_note ?? (priceResult && (priceResult.pv_note ?? priceResult.selected_npv))
   const colWorst = pp.pv_note_to_worst ?? pp.pv_note_to_worst_call ?? (priceResult && (priceResult.npv_to_worst_call || priceResult.npv_to_worst))
   const colMat = pp.pv_note_to_maturity ?? (priceResult && (priceResult.npv_to_maturity || priceResult.npv_to_maturity))
 
   // Dynamically distribute all non-null fields from data across three columns
-  const allEntries = Object.entries(data).filter(([k, v]) => v != null && v !== '' && (typeof v !== 'object' || Object.keys(v).length > 0))
+  const allEntries = Object.entries(data).filter((entry) => {
+    const v = entry[1]
+    return v != null && v !== '' && (typeof v !== 'object' || Object.keys(v).length > 0)
+  })
   const colSize = Math.ceil(allEntries.length / 3)
   const firstCol = Object.fromEntries(allEntries.slice(0, colSize))
   const secondCol = Object.fromEntries(allEntries.slice(colSize, colSize * 2))
@@ -318,9 +334,18 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
     return rawValue
   }
   // build table rows: each row contains up to three field/value pairs (col pairs: 1-2, 3-4, 5-6)
-  const entries1 = Object.entries(firstCol).filter(([k, v]) => v != null && v !== '')
-  const entries2 = Object.entries(secondCol).filter(([k, v]) => v != null && v !== '')
-  const entries3 = Object.entries(thirdCol).filter(([k, v]) => v != null && v !== '')
+  const entries1 = Object.entries(firstCol).filter((entry) => {
+    const v = entry[1]
+    return v != null && v !== ''
+  })
+  const entries2 = Object.entries(secondCol).filter((entry) => {
+    const v = entry[1]
+    return v != null && v !== ''
+  })
+  const entries3 = Object.entries(thirdCol).filter((entry) => {
+    const v = entry[1]
+    return v != null && v !== ''
+  })
   const maxLen = Math.max(entries1.length, entries2.length, entries3.length)
   const rows = []
   for (let i = 0; i < maxLen; i++) {
@@ -336,6 +361,10 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
   const startEdit = () => {
     const initial = {}
     for (const [k, v] of allDisplayedEntries) initial[k] = v
+    // Ensure mandatory fields are included in draft
+    initial.instrument_id = mandatoryFields.instrument_id
+    initial.model = mandatoryFields.model
+    initial.currency = mandatoryFields.currency
     setDraftValues(initial)
     setEditMode(true)
   }
@@ -343,6 +372,8 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
   const cancelEdit = () => {
     setEditMode(false)
     setDraftValues({})
+    setNewKey('')
+    setNewValue('')
   }
 
   const saveEdit = async () => {
@@ -355,24 +386,20 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
         updated[k] = coerceEditedValue(k, v, original)
       }
 
-      const fileNameRaw = bondFile || `${isin}.json`
-      const fileName = String(fileNameRaw).split('/').pop() || `${isin}.json`
-      const jsonBlob = new Blob([JSON.stringify(updated, null, 2)], { type: 'application/json' })
-      const form = new FormData()
-      form.append('file', jsonBlob, fileName)
-
-      const base = String(apiBase || '').replace(/\/$/, '')
-      const endpoint = `${base}/update_asset`
-      const resp = await fetch(endpoint, { method: 'POST', body: form })
-      if (!resp.ok) {
-        const msg = await resp.text().catch(() => 'Unknown error')
-        setSnack({ visible: true, message: `Save failed: ${msg}`, type: 'error' })
-        return
+      // Include new field from the key/value textboxes if both are filled
+      const trimmedKey = newKey.trim()
+      const trimmedValue = newValue.trim()
+      if (trimmedKey && trimmedValue) {
+        updated[trimmedKey] = coerceEditedValue(trimmedKey, trimmedValue, undefined)
       }
+
+      await updateAsset(updated, bondFile, isin)
 
       setData(updated)
       setEditMode(false)
       setDraftValues({})
+      setNewKey('')
+      setNewValue('')
       setSnack({ visible: true, message: 'Asset updated successfully', type: 'success' })
     } catch (e) {
       setSnack({ visible: true, message: `Save failed: ${String(e)}`, type: 'error' })
@@ -437,7 +464,7 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
         )}
       </div>
       <h2>{(data.description ? (data.description.length > 100 ? data.description.slice(0, 99) + '…' : data.description) : instrumentId)}</h2>
-      <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 16, gap: 16 }}>
         <div style={{ width: 380, height: 300, position: 'relative' }}>
           {hasRadarChart ? (
             <>
@@ -520,6 +547,50 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
             </div>
           )}
         </div>
+        <table className="instrument-table" style={{ border: 'none', alignSelf: 'flex-start' }}>
+          <tbody>
+            <tr>
+              <td className="detail-key" style={{ border: 'none', padding: '6px 8px', fontWeight: 600 }}>instrument_id</td>
+              <td className="detail-value" style={{ border: 'none', padding: '6px 8px' }}>
+                {editMode ? renderEditor('instrument_id', mandatoryFields.instrument_id) : (mandatoryFields.instrument_id || '-')}
+              </td>
+            </tr>
+            <tr>
+              <td className="detail-key" style={{ border: 'none', padding: '6px 8px', fontWeight: 600 }}>model</td>
+              <td className="detail-value" style={{ border: 'none', padding: '6px 8px' }}>
+                {editMode ? renderEditor('model', mandatoryFields.model) : (mandatoryFields.model || '-')}
+              </td>
+            </tr>
+            <tr>
+              <td className="detail-key" style={{ border: 'none', padding: '6px 8px', fontWeight: 600 }}>currency</td>
+              <td className="detail-value" style={{ border: 'none', padding: '6px 8px' }}>
+                {editMode ? renderEditor('currency', mandatoryFields.currency) : (mandatoryFields.currency || '-')}
+              </td>
+            </tr>
+            {editMode && (
+              <tr>
+                <td className="detail-key" style={{ border: 'none', padding: '6px 8px', fontWeight: 600 }}>
+                  <input
+                    type="text"
+                    placeholder="new key"
+                    value={newKey}
+                    onChange={(e) => setNewKey(e.target.value)}
+                    style={{ width: '100%', padding: '4px 6px', fontSize: 13, boxSizing: 'border-box', border: '1px solid #444', borderRadius: 4, background: '#2a2a2a', color: '#fff' }}
+                  />
+                </td>
+                <td className="detail-value" style={{ border: 'none', padding: '6px 8px' }}>
+                  <input
+                    type="text"
+                    placeholder="new value"
+                    value={newValue}
+                    onChange={(e) => setNewValue(e.target.value)}
+                    style={{ width: '100%', padding: '4px 6px', fontSize: 13, boxSizing: 'border-box', border: '1px solid #444', borderRadius: 4, background: '#2a2a2a', color: '#fff' }}
+                  />
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
       <table className="instrument-table" style={{width: '100%', border: 'none'}}>
         <tbody>

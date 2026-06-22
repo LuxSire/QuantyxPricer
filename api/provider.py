@@ -13,11 +13,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = PROJECT_ROOT / '.env'
 load_dotenv(ENV_FILE)
 
-EODHD_API_TOKEN = os.getenv('EODHD_API_TOKEN')
+EODHD_API_TOKEN = os.getenv('EODHD_API_KEY')
 EODHD_API_URL = 'https://eodhd.com/api/eod'
 
 
 CBONDS_API_URL = "https://ws.cbonds.info/services/json/get_emissions/?lang=eng"
+CBONDS_API_PRICES_URL = "https://ws.cbonds.info/services/json/get_tradings/?lang=eng"
+CBONDS_API_ESTIMATES_URL = "https://ws.cbonds.info/services/json/API_CbondsQuotes/get_cbonds_estimation/?lang=eng"
+
 CBONDS_LOGIN = (os.getenv('CBONDS_LOGIN') or '').strip()
 CBONDS_PASSWORD = (os.getenv('CBONDS_PASSWORD') or '').strip()
 CBONDS_AUTH = {
@@ -89,7 +92,13 @@ def fetch_from_cbonds(isin_code: str) -> Optional[Dict[str, Any]]:
 
         if isinstance(results, list) and len(results) > 0:
             print(f"[Provider] Found {len(results)} result(s) from cbonds")
-            return results[0]
+            item = results[0]
+            try:
+                if isinstance(item, dict):
+                    item['provider'] = 'cbonds'
+            except Exception:
+                pass
+            return item
 
         print(f"[Provider] No results found in cbonds response")
         return None
@@ -102,7 +111,7 @@ def fetch_from_cbonds(isin_code: str) -> Optional[Dict[str, Any]]:
 
 
 
-def fetch_from_eodhd(code: str) -> Optional[Dict[str, Any]]:
+def fetch_prices_from_eodhd(code: str) -> Optional[Dict[str, Any]]:
     """
     Fetch end-of-day instrument data from EODHD.
 
@@ -132,12 +141,18 @@ def fetch_from_eodhd(code: str) -> Optional[Dict[str, Any]]:
         response.raise_for_status()
 
         data = response.json()
-        if isinstance(data, dict) and data:
+        if isinstance(data, list):
+            print(f"[Provider] Found EODHD data for {symbol} (list with {len(data)} records)")
+            return {'provider': 'eodhd', 'instrument_id': symbol, 'data': data}
+        elif isinstance(data, dict):
             print(f"[Provider] Found EODHD data for {symbol}")
+            data['provider'] = 'eodhd'
+            data['instrument_id'] = symbol
             return data
+        else:
+            print(f"[Provider] Unexpected EODHD response type: {type(data)}")
+            return None
 
-        print(f"[Provider] No EODHD data found for {symbol}")
-        return None
     except requests.RequestException as e:
         print(f"[Provider] EODHD API request failed for {symbol}: {e}")
         return None
@@ -146,3 +161,165 @@ def fetch_from_eodhd(code: str) -> Optional[Dict[str, Any]]:
         return None
     except Exception as e:
         print(f"[Provider] Unexpected error fetching from EODHD: {e}")
+        return None
+
+
+def fetch_prices_from_cbonds(code: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch price / market data for a non-equity instrument from cbonds.
+
+    Calls the cbonds tradings API endpoint directly to retrieve
+    price data (fields like price, yield, trade_date, volume, etc.).
+    """
+    if not code or not code.strip():
+        return None
+
+    isin_code = code.strip()
+    payload = {
+        "auth": CBONDS_AUTH,
+        "filters": [
+            {
+                "field": "isin_code",
+                "operator": "eq",
+                "value": isin_code
+            }
+        ],
+        "quantity": {
+            "limit": 10,
+            "offset": 0
+        },
+        "sorting": [
+            {
+                "field": "trade_date",
+                "order": "desc"
+            }
+        ],
+        "fields": [
+            {"field": "isin_code"},
+            {"field": "price"},
+            {"field": "yield"},
+            {"field": "trade_date"},
+            {"field": "volume"}
+        ]
+    }
+
+    try:
+        headers = {
+            "Content-Type": "application/json"
+        }
+        print(f"[Provider] Sending cbonds prices request for {isin_code}")
+        print(f"[Provider] Auth login: {CBONDS_AUTH.get('login', 'NOT SET')}")
+        print(f"[Provider] URL: {CBONDS_API_URL}")
+        print(f"[Provider] Payload: {json.dumps(payload, indent=2)}")
+
+        response = requests.post(CBONDS_API_URL, json=payload, headers=headers, timeout=10)
+        print(f"[Provider] Response status: {response.status_code}")
+        print(f"[Provider] Response text: {response.text[:500]}")
+
+        response.raise_for_status()
+
+        data = response.json()
+        print(f"[Provider] Response JSON: {json.dumps(data, indent=2)[:500]}")
+
+        prices = data.get('items', [])
+        if isinstance(prices, list) and len(prices) > 0:
+            print(f"[Provider] Found {len(prices)} price record(s) from cbonds")
+            item = prices[0]
+            try:
+                if isinstance(item, dict):
+                    item['provider'] = 'cbonds'
+                    item['instrument_id'] = item.get('isin_code', isin_code)
+            except Exception:
+                pass
+            return item
+
+        print(f"[Provider] No price data found in cbonds response for {isin_code}")
+        return None
+    except requests.RequestException as e:
+        print(f"[Provider] cbonds prices API request failed for {isin_code}: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"[Provider] Failed to parse cbonds prices response: {e}")
+        return None
+
+
+def fetch_estimates_from_cbonds(isin_code: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch estimates data for an instrument from cbonds.
+
+    Calls the cbonds estimation API endpoint to retrieve
+    estimate data (fields like price_bid, price_ask, yield_bid, yield_ask, etc.).
+    """
+    if not isin_code or not isin_code.strip():
+        return None
+
+    isin_code = isin_code.strip()
+    payload = {
+        "auth": CBONDS_AUTH,
+        "filters": [
+            {
+                "field": "isin_code",
+                "operator": "eq",
+                "value": isin_code
+            }
+        ],
+        "quantity": {
+            "limit": 10,
+            "offset": 0
+        },
+        "sorting": [
+            {
+                "field": "date",
+                "order": "desc"
+            }
+        ],
+        "fields": [
+            {"field": "isin_code"},
+            {"field": "date"},
+            {"field": "price_bid"},
+            {"field": "price_ask"},
+            {"field": "price_last"},
+            {"field": "yield_bid"},
+            {"field": "yield_ask"},
+            {"field": "yield_last"}
+        ]
+    }
+
+    try:
+        headers = {
+            "Content-Type": "application/json"
+        }
+        print(f"[Provider] Sending cbonds estimates request for {isin_code}")
+        print(f"[Provider] Auth login: {CBONDS_AUTH.get('login', 'NOT SET')}")
+        print(f"[Provider] URL: {CBONDS_API_ESTIMATES_URL}")
+        print(f"[Provider] Payload: {json.dumps(payload, indent=2)}")
+
+        response = requests.post(CBONDS_API_ESTIMATES_URL, json=payload, headers=headers, timeout=30)
+        print(f"[Provider] Response status: {response.status_code}")
+        print(f"[Provider] Response text: {response.text[:500]}")
+
+        response.raise_for_status()
+
+        data = response.json()
+        print(f"[Provider] Response JSON: {json.dumps(data, indent=2)[:500]}")
+
+        estimates = data.get('items', [])
+        if isinstance(estimates, list) and len(estimates) > 0:
+            print(f"[Provider] Found {len(estimates)} estimate record(s) from cbonds")
+            item = estimates[0]
+            try:
+                if isinstance(item, dict):
+                    item['provider'] = 'cbonds'
+                    item['instrument_id'] = item.get('isin_code', isin_code)
+            except Exception:
+                pass
+            return item
+
+        print(f"[Provider] No estimate data found in cbonds response for {isin_code}")
+        return None
+    except requests.RequestException as e:
+        print(f"[Provider] cbonds estimates API request failed for {isin_code}: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"[Provider] Failed to parse cbonds estimates response: {e}")
+        return None

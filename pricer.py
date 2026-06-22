@@ -123,12 +123,27 @@ def price_asset(asset: Asset, curve_json: dict, args: argparse.Namespace) -> dic
     so it can be called programmatically without touching the filesystem.
     """
     asset_data = _normalize_dates(asset.to_dict())
+    # Always use today as evaluation date when pricer is launched
+    from datetime import date as dt_date
+    asset_data['evaluation_date'] = dt_date.today().strftime('%d-%m-%Y')
     # Synthesise a pseudo-filename for logging / return value
     instrument_id = asset.instrument_id or 'unknown'
     pseudo_filename = f'{instrument_id}.json'
 
     model_name = str(asset_data.get('model', '')).strip().lower()
-    if not model_name:
+    
+    # If model is missing or 'none', check if it's an equity asset
+    if not model_name or model_name == 'none':
+        asset_type = str(asset_data.get('asset_type', '')).strip().lower()
+        if asset_type == 'equity':
+            return {
+                'bond_file': pseudo_filename,
+                'instrument_id': instrument_id,
+                'model': 'none',
+                'currency': asset_data.get('currency'),
+                'message': f'Equity asset {instrument_id} cannot be priced with bond pricing models.',
+                'asset_type': 'equity',
+            }
         raise ValueError(f'Missing model field for asset {instrument_id}. Add model in the Asset object.')
 
     effective_model = model_name

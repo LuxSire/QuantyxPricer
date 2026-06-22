@@ -1,4 +1,5 @@
 import sys
+import logging
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -18,10 +19,16 @@ import subprocess, sys
 import threading
 import uuid
 from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
-from classes import Price, Prices
+from classes import Price, Prices, Asset, Assets
+
 import db
 import provider
+import pricer
+from pydantic import BaseModel
 
+class PriceRequest(BaseModel):
+    instrument_id: str
+    
 app = FastAPI(
     title="Quantyx Pricer API",
     description="API for uploading assets and pricing single or all instruments.",
@@ -63,19 +70,25 @@ JOBS = {}
 JOBS_LOCK = threading.Lock()
 
 # Cached assets and prices loaded at startup
-assets = []
+assets = Assets()
 prices = Prices()
+underlying_assets = Assets()
 
 
 @app.on_event('startup')
 async def initialize_data():
-    global assets, prices
+    global assets, prices,underlying_assets
     try:
-        assets = await fetch_assets()
-        print(f"[API] Loaded {len(assets) if isinstance(assets, list) else 0} assets from database")
+        loaded_assets = await fetch_assets()
+        print(f"[API] Sample asset from DB: {loaded_assets[0] if loaded_assets else 'empty'}")  # ← add this
+        if isinstance(loaded_assets, list) or isinstance(loaded_assets, dict):
+            assets = Assets.from_data(loaded_assets)
+        else:
+            assets = Assets()
+        print(f"[API] Loaded {len(assets)} assets from database")
     except Exception as e:
         print(f"[API] Warning: could not load assets at startup: {e}")
-        assets = []
+        assets = Assets()
 
     try:
         loaded_prices = await fetch_prices()
@@ -88,6 +101,17 @@ async def initialize_data():
         print(f"[API] Warning: could not load prices at startup: {e}")
         prices = Prices()
 
+    try:
+        for asset in assets.values():
+            if hasattr(asset, 'underlying') and asset.underlying is not None:
+                # asset.underlying is already an Asset instance created by Asset.from_dict()
+                key = asset.underlying.instrument_id
+                if key:
+                    underlying_assets[key] = asset.underlying
+            print(f"[API] Extracted {len(underlying_assets)} underlying assets")
+    except Exception as e:
+        print(f"[API] Warning: could not extract underlying assets: {e}")
+        underlying_assets = Assets()
 
 def _write_log(log_path, obj):
     try:
@@ -176,7 +200,7 @@ async def save_asset(request: Request, payload: dict = None):
 
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail='JSON object required in request body')
-    bond = payload
+    asset = payload
 
     # Normalize common date fields into ISO YYYY-MM-DD
     def try_parse_date(val: Any):
@@ -199,27 +223,27 @@ async def save_asset(request: Request, payload: dict = None):
         'interest_commencement_date', 'expiry_date', 'first_day_of_trading'
     ]
     for k in date_keys:
-        if k in bond:
-            parsed = try_parse_date(bond[k])
+        if k in asset:
+            parsed = try_parse_date(asset[k])
             if parsed:
-                bond[k] = parsed
+                asset[k] = parsed
             else:
-                print(f"[API] Could not parse date field {k}: {bond.get(k)}")
-    instrument_id = bond.get('instrument_id') or bond.get('isin')
+                print(f"[API] Could not parse date field {k}: {asset.get(k)}")
+    instrument_id = asset.get('instrument_id') or asset.get('isin')
     if not instrument_id:
-        raise HTTPException(status_code=400, detail='bond JSON must include instrument_id or isin')
+        raise HTTPException(status_code=400, detail='asset JSON must include instrument_id or isin')
     filename = f"{instrument_id}.json"
     path = ASSETS_DIR / filename
     try:
         with open(path, 'w') as f:
-            json.dump(bond, f, indent=2)
+            json.dump(asset, f, indent=2)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     print(f"[API] Saved asset to {path} (size={path.stat().st_size} bytes)")
     
     # Also save to MySQL database
     try:
-        row_id = db.insert_asset(bond)
+        row_id = db.insert_asset(asset)
         print(f"[API] Inserted asset into MySQL with id={row_id}")
     except Exception as e:
         print(f"[API] Warning: could not insert asset into MySQL: {e}")
@@ -241,10 +265,18 @@ async def update_asset(file: UploadFile = File(...)):
     if not path.exists():
         raise HTTPException(status_code=404, detail=f'Asset file not found: {filename}')
 
+    print(f"[API] /update_asset received file: filename={filename}, content_type={file.content_type}, size={file.size if hasattr(file, 'size') else 'unknown'}")
+    
     try:
         raw = await file.read()
+        print(f"[API] /update_asset read {len(raw)} bytes from file")
         payload = json.loads(raw.decode('utf-8'))
+        if isinstance(payload, dict):
+            print(f"[API] /update_asset parsed JSON content: {json.dumps(payload, indent=2, default=str)}")
+        else:
+            print(f"[API] /update_asset parsed JSON type: {type(payload)}, value: {payload}")
     except Exception as e:
+        print(f"[API] /update_asset error reading/parsing file: {e}")
         raise HTTPException(status_code=400, detail=f'Invalid JSON file: {e}')
 
     if not isinstance(payload, dict):
@@ -280,6 +312,29 @@ async def update_asset(file: UploadFile = File(...)):
             json.dump(payload, f, indent=2)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f'Could not update asset file: {e}')
+    
+    # Also update in MySQL database
+    try:
+        row_id = db.insert_asset(payload)
+        print(f"[API] Updated asset in MySQL with id={row_id}")
+    except Exception as e:
+        print(f"[API] Warning: could not update asset in MySQL: {e}")
+        # Do not fail the update if DB update fails; file is already saved
+
+    # Update the global assets cache
+    try:
+        instrument_id = payload.get('instrument_id') or Path(filename).stem
+        if instrument_id:
+            # Create Asset object from payload if possible, otherwise store dict
+            try:
+                asset_obj = Asset.from_dict(payload) if hasattr(Asset, 'from_dict') else Asset(**payload)
+                assets[instrument_id] = asset_obj
+            except Exception:
+                # Fallback: store as dict
+                assets[instrument_id] = payload
+            print(f"[API] Updated global assets cache for instrument_id={instrument_id}")
+    except Exception as e:
+        print(f"[API] Warning: could not update global assets cache: {e}")
 
     return {"updated": filename, "path": str(path)}
 
@@ -392,6 +447,112 @@ async def fetch_assets():
         print(f"[API] Error fetching assets from database: {e}")
         raise HTTPException(status_code=500, detail='Could not fetch assets from database')
 
+@app.get('/fetch_underlying_assets', tags=['Assets'], summary='Fetch all underlying assets')
+async def fetch_underlying_assets():
+    try:
+        # Convert underlying_assets Assets collection to list of dicts
+        result = []
+        for asset in underlying_assets.values():
+            if hasattr(asset, 'to_dict'):
+                result.append(asset.to_dict())
+            elif isinstance(asset, dict):
+                result.append(asset)
+        print(f"[API] Returning {len(result)} underlying assets")
+        return result
+    except Exception as e:
+        print(f"[API] Error fetching underlying assets: {e}")
+        raise HTTPException(status_code=500, detail='Could not fetch underlying assets')
+
+def _is_equity_asset(asset: dict) -> bool:
+    """Heuristic detection whether an asset represents an equity.
+
+    Checks a few common fields used in the repository and falls back
+    to checking underlying_class_name_eng/underlying_class_id.
+    """
+    if not isinstance(asset, dict):
+        return False
+    at = (asset.get('asset_type'))
+    if isinstance(at, str) and at.lower() == 'equity':
+        return True
+    return False
+
+
+@app.get('/download_prices', tags=['Pricing'], summary='Download market/pricing data for one instrument')
+async def download_prices(instrument_id: str):
+    if not instrument_id or not instrument_id.strip():
+        raise HTTPException(status_code=400, detail='instrument_id is required')
+    safe_id = Path(instrument_id.strip()).name
+
+    # find matching asset in cached assets
+    _asset = assets.get(safe_id)
+    
+    # if not found, try underlying_assets cache
+    if _asset is None:
+        underlying = underlying_assets.get(safe_id)
+        if underlying is not None:
+            _asset = underlying.to_dict() if hasattr(underlying, 'to_dict') else underlying
+    # if not found, try DB lookup
+    if _asset is None:
+        try:
+            _asset = db.select_asset(safe_id)
+        except Exception:
+            _asset = None
+
+    # Convert Asset object to dict if needed
+    asset_dict = _asset.to_dict() if hasattr(_asset, 'to_dict') else _asset if _asset else None
+    
+    try:
+        if _asset is not None and _is_equity_asset(asset_dict):
+            # for equities use EODHD
+            code = asset_dict.get('ticker') or asset_dict.get('isin_code') or safe_id
+            res = provider.fetch_prices_from_eodhd(code)
+        elif _asset is not None:
+            code = asset_dict.get('isin_code') or safe_id
+            res = provider.fetch_from_cbonds(code)
+        else:
+            # Asset not found in cache/DB - try EODHD directly (e.g., for tickers like AAPL)
+            print(f"[API] Asset {safe_id} not found in cache/DB, trying EODHD directly")
+            res = provider.fetch_prices_from_eodhd(safe_id)
+            if res is None:
+                # Also try cbonds
+                res = provider.fetch_from_cbonds(safe_id)
+        
+        if res is None :
+            raise HTTPException(status_code=404, detail=f'No market data found for {safe_id}')
+        print(f"[API] Downloaded market data for {safe_id}: prices={res is not None}")
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[API] Error downloading price for {safe_id}: {e}")
+        raise HTTPException(status_code=500, detail='Error fetching market data')
+
+
+@app.get('/download_all_prices', tags=['Pricing'], summary='Download market/pricing data for all cached assets')
+async def download_all_prices():
+    results = []
+    if not isinstance(assets, list):
+        raise HTTPException(status_code=500, detail='Assets cache is not a list')
+
+    for a in assets:
+        try:
+            if not isinstance(a, dict):
+                continue
+            iid = a.get('instrument_id') or a.get('isin_code') or None
+            if not iid:
+                continue
+            if _is_equity_asset(a):
+                code = a.get('bbgid_ticker') or a.get('isin_code') or iid
+                res = provider.fetch_prices_from_eodhd(code)
+            else:
+                code = a.get('isin_code') or iid
+                res = provider.fetch_from_cbonds(code)
+            results.append({'instrument_id': iid, 'data': res})
+        except Exception as e:
+            results.append({'instrument_id': a.get('instrument_id') or a.get('isin_code'), 'error': str(e)})
+
+    return results
+
 
 @app.get('/fetch_prices', tags=['Pricing'], summary='Fetch all prices from MySQL')
 async def fetch_prices():
@@ -401,6 +562,55 @@ async def fetch_prices():
     except Exception as e:
         print(f"[API] Error fetching prices from database: {e}")
         raise HTTPException(status_code=500, detail='Could not fetch prices from database')
+
+
+@app.post('/insert_prices', tags=['Pricing'], summary='Insert prices JSON into MySQL')
+async def insert_prices(request: Request, payload: Any = None):
+    """Insert price JSON into the database by calling `db.insert_prices`.
+
+    Expects a JSON body (object or list) and returns the inserted row id.
+    """
+    # Read raw body if payload not provided
+    raw_body = None
+    try:
+        raw_body = await request.body()
+    except Exception:
+        raw_body = None
+
+    if payload is None:
+        try:
+            payload = json.loads(raw_body.decode('utf-8')) if raw_body else None
+        except Exception:
+            raise HTTPException(status_code=400, detail='Invalid JSON body')
+
+    if payload is None:
+        raise HTTPException(status_code=400, detail='JSON body required')
+
+    try:
+        logging.info('Inserting prices into database...')
+        print(f"[API] Inserting prices into database, payload: {json.dumps(payload, indent=4)}")
+        
+        # Validate that payload contains required fields
+        if isinstance(payload, dict):
+            instrument_id = payload.get('instrument_id')
+            provider = payload.get('provider')
+            print(f"[API] Payload validation - instrument_id: {instrument_id}, provider: {provider}")
+            
+            if not instrument_id:
+                print(f"[API] WARNING: payload missing instrument_id")
+            if not provider:
+                print(f"[API] WARNING: payload missing provider")
+        elif isinstance(payload, list):
+            print(f"[API] Payload is a list with {len(payload)} items")
+            for i, item in enumerate(payload[:3]):  # Log first 3 items
+                if isinstance(item, dict):
+                    print(f"[API] Item {i}: instrument_id={item.get('instrument_id')}, provider={item.get('provider')}")
+        
+        row_id = db.insert_prices(payload)
+        return {'inserted_id': row_id}
+    except Exception as e:
+        print(f"[API] Error inserting prices: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get('/fetch_termsheet', tags=['Assets'], summary='Fetch one termsheet PDF by instrument_id')
@@ -447,146 +657,106 @@ async def fetch_report(instrument_id: str):
     )
 
 
-@app.post('/price', tags=['Pricing'], summary='Price one instrument by InstrumentId')
-async def price(request: Request, payload: dict = None):
+@app.post('/price', tags=['Pricing'], summary='Price one instrument by instrument_id')
+async def price(payload: PriceRequest):
     """Price a single bond.
 
-    Accepts either:
-    - { "bond_file": "FR0013398757.json" }  # filename under assets/ or absolute path
-    - { "bond": { ... } }                    # full bond JSON (will be saved to assets/ then priced)
-
-    Returns the pricer result JSON (same format as entries in prices.json).
+    Expects: { "instrument_id": "FR0013398757" }
+    Looks up the instrument in the cached assets list and prices it via price_asset().
+    Returns the pricer result JSON.
     """
-    # Read raw body and log request metadata
-    raw_body = None
-    try:
-        raw_body = await request.body()
-    except Exception:
-        raw_body = None
+    instr = payload.instrument_id
+    print(f"[/price] Request received for instrument_id={instr}")
 
-    # Prepare log entry
     log_path = PROJECT_ROOT / 'output' / 'price_requests.log'
     log_path.parent.mkdir(parents=True, exist_ok=True)
     entry = {
         'ts': datetime.utcnow().isoformat() + 'Z',
         'client': None,
-        'instrument': None,
+        'instrument': instr,
         'status': None,
         'msg': None,
     }
+
+    # Look up the asset in the cached global assets list
+    print(f"[/price] Assets cache size: {len(assets)}, keys: {list(assets.keys())[:10]}")
+    _asset = assets.get(instr)
+    
+    # if not found, try underlying_assets cache
+    if _asset is None:
+        underlying = underlying_assets.get(instr)
+        if underlying is not None:
+            _asset = underlying  # Keep as Asset object, not dict
+            print(f"[/price] Found asset in underlying_assets for instrument_id={instr}")
+    
+    # if not found, try DB lookup
+    if _asset is None:
+        try:
+            _asset = db.select_asset(instr)
+            if _asset is not None:
+                print(f"[/price] Found asset in DB for instrument_id={instr}")
+        except Exception as e:
+            print(f"[/price] DB lookup failed for {instr}: {e}")
+    
+    if _asset is None:
+        print(f"[/price] Asset not found in cache for instrument_id={instr}")
+        entry['status'] = 404
+        entry['msg'] = f'Asset not found in cache: {instr}'
+        _write_log(log_path, {**entry, 'event': 'not_found'})
+        raise HTTPException(status_code=404, detail=f'Asset not found for instrument_id: {instr}')
+    print(f"[/price] Found asset in cache: {list(_asset.keys()) if isinstance(_asset, dict) else type(_asset)}")
+
+    # Load curves
+    print(f"[/price] Loading curve from {pricer.DEFAULT_CURVE_FILE}")
+    curve_path = pricer.resolve_curve_path(str(pricer.DEFAULT_CURVE_FILE))
     try:
-        entry['client'] = request.client.host if request.client else None
-    except Exception:
-        entry['client'] = None
+        curve_json = pricer.hullwhite.load_json(curve_path)
+        print(f"[/price] Curve loaded successfully from {curve_path}")
+    except Exception as e:
+        print(f"[/price] ERROR loading curve: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f'Could not load curve file: {e}')
 
-    # Parse JSON body if not provided
-    if payload is None:
-        try:
-            payload = json.loads(raw_body.decode('utf-8')) if raw_body else None
-        except Exception:
-            payload = None
 
+    args = SimpleNamespace(
+        issuer_spread_bp=None,
+        tree_steps=None,
+        time_steps=None,
+        num_paths=None,
+        seed=None,
+    )
+
+    # Price the asset
+    print(f"[/price] Calling price_asset for {instr} with model={_asset.model}")
+    asset_data=_asset.to_dict()
+    print(f"[/price] bond_data evaluation_date={asset_data.get('evaluation_date')!r}")
+    print(f"[/price] bond_data maturity_date={asset_data.get('maturity_date')!r}")
+    print(f"[/price] bond_data issue_date={asset_data.get('issue_date')!r}")
+    print(f"[/price] bond_data first_coupon_date={asset_data.get('first_coupon_date')!r}")
+    print(f"[/price] bond_data call_dates={asset_data.get('call_dates')!r}")
+    print(f"[/price] Full bond_data: {asset_data}")  
     try:
-        if isinstance(payload, dict):
-            entry['instrument'] = payload.get('InstrumentId') or payload.get('instrument_id')
-    except Exception:
-        pass
-
-    # write initial log line (incoming request)
-    try:
-        with open(log_path, 'a') as lf:
-            lf.write(json.dumps({**entry, 'event': 'incoming'}) + '\n')
-    except Exception:
-        pass
-
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail='JSON body required')
-
-    # If InstrumentId provided, call pricer CLI and return the pricer result
-    instr = payload.get('InstrumentId') if isinstance(payload, dict) else None
-    if instr:
-        entry['instrument'] = instr
+        result = pricer.price_asset(_asset, curve_json, args)
+        print(f"[/price] Pricing succeeded for {instr}: {list(result.keys()) if isinstance(result, dict) else result}")
+        
+        # Store the pricing result in the database
         try:
-            with open(log_path, 'a') as lf:
-                lf.write(json.dumps({**entry, 'event': 'pricing_started'}) + '\n')
-        except Exception:
-            pass
-        # call pricer as a CLI: python pricer.py --bond <InstrumentId>
-        pricer_py = PROJECT_ROOT / 'pricer.py'
-        cmd = [sys.executable, str(pricer_py), '--bond', str(instr)]
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        except Exception as e:
-            entry['status'] = 500
-            entry['msg'] = f'Failed to run pricer CLI: {e}'
-            try:
-                with open(log_path, 'a') as lf:
-                    lf.write(json.dumps({**entry, 'event': 'pricing_failed'}) + '\n')
-            except Exception:
-                pass
-            raise HTTPException(status_code=500, detail=f'Failed to run pricer CLI: {e}')
-
-        # Log CLI output for debugging
-        print(f"[API] pricer CLI stdout:\n{proc.stdout}")
-        if proc.stderr:
-            print(f"[API] pricer CLI stderr:\n{proc.stderr}")
-
-        # Try to import pricer module and return structured result via dispatch_one
-        # Ensure project root is on sys.path so the parent-level pricer.py is importable
-        try:
-            if str(PROJECT_ROOT) not in sys.path:
-                sys.path.insert(0, str(PROJECT_ROOT))
-            import pricer
-        except Exception as e:
-            entry['status'] = 500
-            entry['msg'] = f'Could not import pricer module after running CLI: {e}'
-            try:
-                with open(log_path, 'a') as lf:
-                    lf.write(json.dumps({**entry, 'event': 'pricing_failed'}) + '\n')
-            except Exception:
-                pass
-            raise HTTPException(status_code=500, detail=f'Could not import pricer module after running CLI: {e}')
-
-        curve_path = pricer.resolve_curve_path(str(pricer.DEFAULT_CURVE_FILE))
-        try:
-            curve_json = pricer.hullwhite.load_json(curve_path)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f'Could not load curve file: {e}')
-
-        # resolve asset path for the provided instrument id
-        bond_file = pricer.resolve_asset_path(str(instr))
-        try:
-            result = pricer.dispatch_one(Path(bond_file), curve_json, SimpleNamespace(
-                issuer_spread_bp=None,
-                tree_steps=None,
-                time_steps=None,
-                num_paths=None,
-                seed=None,
-                bond=None,
-                bond_file=None,
-                curve_file=str(curve_path),
-            ))
-            entry['status'] = 200
-            entry['msg'] = 'pricing_succeeded'
-            try:
-                with open(log_path, 'a') as lf:
-                    lf.write(json.dumps({**entry, 'event': 'pricing_succeeded'}) + '\n')
-            except Exception:
-                pass
-            return result
-        except Exception as e:
-            entry['status'] = 500
-            entry['msg'] = f'Could not price instrument: {e}'
-            try:
-                with open(log_path, 'a') as lf:
-                    lf.write(json.dumps({**entry, 'event': 'pricing_failed', 'error': str(e)}) + '\n')
-            except Exception:
-                pass
-            raise HTTPException(status_code=500, detail=f'Could not price instrument {instr}: {e}')
-
-    # Deprecated: other modes removed. Ask client to send InstrumentId.
-    raise HTTPException(status_code=400, detail='Provide "InstrumentId" in request body')
-
+            db.insert_prices(result)
+            print(f"[/price] Stored pricing result in database for {instr}")
+        except Exception as db_err:
+            print(f"[/price] Warning: could not store pricing result in DB: {db_err}")
+        
+        entry['status'] = 200
+        entry['msg'] = 'pricing_succeeded'
+        _write_log(log_path, {**entry, 'event': 'pricing_succeeded'})
+        return result
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[/price] ERROR pricing {instr}: {type(e).__name__}: {e}\n{tb}")
+        entry['status'] = 500
+        entry['msg'] = f'Could not price instrument: {e}'
+        _write_log(log_path, {**entry, 'event': 'pricing_failed', 'error': str(e), 'traceback': tb})
+        raise HTTPException(status_code=500, detail=f'Could not price instrument {instr}: {e}')
 
 @app.get('/jobs/{job_id}', tags=['Jobs'], summary='Get async job status')
 async def get_job(job_id: str):
@@ -654,6 +824,32 @@ async def get_prices(request: Request):
             pass
         print(f"[API] /prices - 500 - {e}")
         raise HTTPException(status_code=500, detail=entry['msg'])
+
+
+@app.get('/fetch_underlying_assets', tags=['Assets'], summary='Fetch all underlying assets')
+async def fetch_underlying_assets():
+    try:
+        # Convert underlying_assets Assets collection to list of dicts
+        result = []
+        for asset in underlying_assets.values():
+            if hasattr(asset, 'to_dict'):
+                result.append(asset.to_dict())
+            elif isinstance(asset, dict):
+                result.append(asset)
+        print(f"[API] Returning {len(result)} underlying assets")
+        # Save to a JSON file and return it
+        out_path = PROJECT_ROOT / 'output' / 'fetch_underlying_assets.json'
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, 'w') as f:
+            json.dump(result, f, indent=2, default=str)
+        return FileResponse(
+            path=str(out_path),
+            media_type='application/json',
+            headers={"Content-Disposition": f'attachment; filename="fetch_underlying_assets.json"'},
+        )
+    except Exception as e:
+        print(f"[API] Error fetching underlying assets: {e}")
+        raise HTTPException(status_code=500, detail='Could not fetch underlying assets')
 
 
 @app.get('/fetch_noprice_assets', tags=['Assets'], summary='List asset instrument_ids not present in prices.json')

@@ -1,6 +1,5 @@
 import argparse
 import math
-from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +9,11 @@ try:
     from models import hullwhite
 except ModuleNotFoundError:
     import hullwhite
+
+try:
+    from models.helper import today_date_string, today_date_string_iso, normalize_rate, parse_date
+except ModuleNotFoundError:
+    from helper import today_date_string, today_date_string_iso, normalize_rate, parse_date
 
 try:
     from reporting import pdf_report
@@ -22,30 +26,6 @@ ASSETS_DIR = PROJECT_ROOT / 'assets'
 CURVES_DIR = PROJECT_ROOT / 'curves'
 CURVE_FILE = CURVES_DIR / 'swap_curves.json'
 BOND_FILE = ASSETS_DIR / 'CH1493992296.json'
-
-
-def parse_date(date_str):
-    if not date_str:
-        raise ValueError('Missing date string')
-    parts = date_str.split('-')
-    if len(parts) != 3:
-        raise ValueError(f'Unsupported date format: {date_str}')
-    if len(parts[0]) == 4:
-        year, month, day = parts
-    else:
-        day, month, year = parts
-    return ql.Date(int(day), int(month), int(year))
-
-
-def today_date_string():
-    return date.today().strftime('%Y-%m-%d')
-
-
-def normalize_rate(value):
-    if value is None or value == '':
-        return 0.0
-    value = float(value)
-    return value / 100.0 if abs(value) > 1.0 else value
 
 
 def build_equity_paths(s0, drift, dividend_yield, volatility, maturity_time, time_steps, num_paths, seed):
@@ -194,7 +174,11 @@ def price_barrier_convertible(curve_json, bond_data, issuer_spread_bp=None):
     expected_redemption = float(np.mean(redemption_values)) * df_maturity
     npv = expected_redemption + coupon_pv
 
+    # Compute pct values relative to denomination for hullwhite compatibility
+    price_pct_val = npv / denomination * 100.0 if denomination > 0 else 0.0
+
     return {
+        'selected_npv': npv,
         'npv': npv,
         'clean_price': npv - accrued_amount,
         'dirty_price': npv,
@@ -211,6 +195,13 @@ def price_barrier_convertible(curve_json, bond_data, issuer_spread_bp=None):
         'barrier_level': barrier_level,
         'strike_level': strike_level,
         'conversion_ratio': conversion_ratio,
+        'price_pct': {
+            'pv_note': price_pct_val,
+            'pv_note_to_worst_call': price_pct_val,
+            'pv_note_to_maturity': price_pct_val,
+        },
+        'npv_to_worst_call': npv,
+        'npv_to_maturity': npv,
     }
 
 

@@ -12,13 +12,14 @@ async def async_client():
 @pytest.mark.asyncio
 async def test_price_endpoint(async_client):
     payload = {
-        "instrument_id": "NOVN SW"
+        "instrument_id": "XS0316010023"
     }
 
 
     try:
         # Make a POST request to the /price endpoint
         response = await async_client.post("/price", json=payload)
+        
     except httpx.HTTPError as e:
         # Log the error details
         logging.error("HTTP error occurred: %s", e)

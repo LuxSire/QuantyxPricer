@@ -5,3 +5,5 @@ python-dateutil
 mysql-connector-python
 python-dotenv
 requests
+numpy
+

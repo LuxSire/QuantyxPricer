@@ -12,12 +12,8 @@ try:
         build_discount_curve,
         get_bond_files,
         get_business_day_convention,
-        get_calendar,
         get_coupon_rate,
-        get_day_count,
         get_frequency,
-        load_json,
-        parse_date,
     )
 except ModuleNotFoundError:
     from hullwhite import (
@@ -26,13 +22,14 @@ except ModuleNotFoundError:
         build_discount_curve,
         get_bond_files,
         get_business_day_convention,
-        get_calendar,
         get_coupon_rate,
-        get_day_count,
         get_frequency,
-        load_json,
-        parse_date,
     )
+
+try:
+    from models.helper import get_calendar, get_day_count, load_json, parse_date
+except ModuleNotFoundError:
+    from helper import get_calendar, get_day_count, load_json, parse_date
 
 try:
     from reporting import pdf_report
@@ -284,7 +281,7 @@ def price_callable_from_path_lsm(cashflows, call_schedule, eval_date, day_count,
     return float(values.mean())
 
 
-def price_bond_monte_carlo(curve_json, bond_data, issuer_spread_bp=None):
+def price_asset(bond_data, curve_json, issuer_spread_bp=None):
     evaluation_date = parse_date(bond_data['evaluation_date'])
     ql.Settings.instance().evaluationDate = evaluation_date
 
@@ -406,7 +403,7 @@ def main():
         for bond_file in get_bond_files(BASE_DIR):
             bond_data = apply_overrides(load_json(bond_file), args)
             try:
-                result = price_bond_monte_carlo(curve_json, bond_data, issuer_spread_bp=args.issuer_spread_bp)
+                result = price_asset(bond_data, curve_json, issuer_spread_bp=args.issuer_spread_bp)
             except Exception as exc:
                 print_mc_skip(bond_data, exc)
                 continue
@@ -421,7 +418,7 @@ def main():
         return
 
     bond_data = apply_overrides(load_json(Path(args.bond_file)), args)
-    result = price_bond_monte_carlo(curve_json, bond_data, issuer_spread_bp=args.issuer_spread_bp)
+    result = price_asset(bond_data, curve_json, issuer_spread_bp=args.issuer_spread_bp)
     print_mc_result(bond_data, result)
     pdf_path = pdf_report.create_pdf_report(
         model_name='montecarlo',

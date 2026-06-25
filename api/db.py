@@ -150,7 +150,7 @@ def select_asset(code: str) -> Optional[Dict[str, Any]]:
     try:
         cursor = conn.cursor(dictionary=True)
         try:
-            cursor.execute('SELECT my_row_id, code, json FROM assets WHERE code=%s LIMIT 1', (code,))
+            cursor.execute('SELECT  code, json FROM assets WHERE code=%s LIMIT 1', (code,))
             row = cursor.fetchone()
         finally:
             cursor.close()
@@ -169,7 +169,7 @@ def select_prices() -> list[Dict[str, Any]]:
     try:
         cursor = conn.cursor(dictionary=True)
         try:
-            cursor.execute('SELECT my_row_id, code, json FROM prices')
+            cursor.execute('SELECT  code, json FROM prices WHERE provider=%s', ('INTERNAL',))
             rows = cursor.fetchall()
         finally:
             cursor.close()
@@ -178,6 +178,20 @@ def select_prices() -> list[Dict[str, Any]]:
     finally:
         conn.close()
 
+def select_timeseries() -> list[Dict[str, Any]]:
+    """Return all rows from the prices table as a list of parsed JSON dicts."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT  code, json FROM prices WHERE provider=%s', ('eodhd',))
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+
+        return [_decode_json_row(row) for row in rows]
+    finally:
+        conn.close()
 
 def select_price(code: str) -> Optional[Dict[str, Any]]:
     """Return the first matching row from the prices table as a parsed JSON dict."""
@@ -185,7 +199,7 @@ def select_price(code: str) -> Optional[Dict[str, Any]]:
     try:
         cursor = conn.cursor(dictionary=True)
         try:
-            cursor.execute('SELECT my_row_id, code, json FROM prices WHERE code=%s LIMIT 1', (code,))
+            cursor.execute('SELECT code, json FROM prices WHERE provider=%s AND code=%s LIMIT 1', ('INTERNAL', code))
             row = cursor.fetchone()
         finally:
             cursor.close()

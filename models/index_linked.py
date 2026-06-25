@@ -86,7 +86,12 @@ def price_note(note_data, curve, curve_day_count):
         )
 
     notional = float(note_data.get('note_notional', 100000000.0))
-    issuer_spread_bp = float(note_data.get('credit_spread_bp', 0.0))
+    collateral_spread_bp = float(
+        note_data.get('collateral_spread_bp')
+        or note_data.get('collateral_spread')
+        or 0.0
+    )
+    issuer_spread_bp = float(note_data.get('credit_spread_bp', 0.0)) + collateral_spread_bp
     index_assumption = get_index_assumption(note_data)
     dates = spire.build_note_dates(note_data)
 
@@ -139,7 +144,7 @@ def price_note(note_data, curve, curve_day_count):
     }
 
 
-def price_index_linked_note(note_data, curve_json):
+def price_asset(note_data, curve_json):
     def calculate_yield_to_maturity(cashflows, evaluation_date, current_pv):
         """
         Calculate yield-to-maturity (YTM) by solving for y in:
@@ -310,7 +315,7 @@ if __name__ == '__main__':
     args = parse_args()
     note_data = spire.load_json(Path(args.bond_file))
     curve_json = spire.load_json(Path(args.curve_file))
-    result = price_index_linked_note(note_data, curve_json)
+    result = price_asset(note_data, curve_json)
     print_report(note_data, result)
     pdf_path = pdf_report.create_pdf_report(
         model_name='index_linked',

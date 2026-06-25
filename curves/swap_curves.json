@@ -9,13 +9,13 @@
     "pillars": [
       {
         "tenor": "ON",
-        "rate": 1.931,
+        "rate": 0.01931,
         "source": "ECB SDW EST/B.EU000A2X2A25.WT (2026-06-11)"
       },
       {
         "tenor": "1M",
         "rate": 0.01935,
-        "source": "off \u20acSTR near-flat front end"
+        "source": "off €STR near-flat front end"
       },
       {
         "tenor": "3M",
@@ -44,32 +44,32 @@
       },
       {
         "tenor": "5Y",
-        "rate": 0.0224,
+        "rate": 0.0220,
         "source": "public"
       },
       {
         "tenor": "7Y",
-        "rate": 0.0227,
+        "rate": 0.02473,
         "source": "public"
       },
       {
         "tenor": "10Y",
-        "rate": 0.023,
+        "rate": 0.026627,
         "source": "public"
       },
       {
         "tenor": "15Y",
-        "rate": 0.02325,
+        "rate": 0.02899,
         "source": "public"
       },
       {
         "tenor": "20Y",
-        "rate": 0.0234,
+        "rate": 0.0302623,
         "source": "public"
       },
       {
         "tenor": "30Y",
-        "rate": 0.0235,
+        "rate": 0.0301,
         "source": "public"
       }
     ]
@@ -84,7 +84,7 @@
     "pillars": [
       {
         "tenor": "ON",
-        "rate": 1.83,
+        "rate": 0.0183,
         "source": "FRED SOFR (2018-04-03)"
       },
       {
@@ -160,7 +160,7 @@
     "pillars": [
       {
         "tenor": "6M",
-        "rate": 2.5364,
+        "rate": 0.025364,
         "source": "ECB SDW FM/M.U2.EUR.RT.MM.EURIBOR6MD_.HSTA (2026-05-01)"
       },
       {
@@ -588,6 +588,126 @@
         "tenor": "5Y",
         "spread_bp": 125,
         "source": "input proxy consistent with World Government Bonds 123.74 bps on 9 Jun 2026"
+      }
+    ]
+  },
+  {
+    "curve_name": "CHF_OIS",
+    "as_of": "2026-06-11",
+    "day_count": "Actual365Fixed",
+    "saron_name": "SARON",
+    "calendar": "TARGET",
+    "compounding": "Annual",
+    "pillars": [
+      {
+        "tenor": "ON",
+        "rate": 0.0,
+        "source": "SNB policy rate 0.00% (2026-06-11)"
+      },
+      {
+        "tenor": "1M",
+        "rate": 0.0005,
+        "source": "public SARON near front end"
+      },
+      {
+        "tenor": "3M",
+        "rate": 0.0008,
+        "source": "public SARON"
+      },
+      {
+        "tenor": "6M",
+        "rate": 0.0012,
+        "source": "public SARON"
+      },
+      {
+        "tenor": "1Y",
+        "rate": 0.0018,
+        "source": "public SARON"
+      },
+      {
+        "tenor": "2Y",
+        "rate": 0.0028,
+        "source": "public"
+      },
+      {
+        "tenor": "3Y",
+        "rate": 0.0038,
+        "source": "public"
+      },
+      {
+        "tenor": "5Y",
+        "rate": 0.0048,
+        "source": "public"
+      },
+      {
+        "tenor": "7Y",
+        "rate": 0.0054,
+        "source": "public"
+      },
+      {
+        "tenor": "10Y",
+        "rate": 0.006,
+        "source": "public SARON swap 10Y"
+      },
+      {
+        "tenor": "15Y",
+        "rate": 0.0064,
+        "source": "public proxy"
+      },
+      {
+        "tenor": "20Y",
+        "rate": 0.0067,
+        "source": "public proxy"
+      },
+      {
+        "tenor": "30Y",
+        "rate": 0.007,
+        "source": "public proxy"
+      }
+    ]
+  },
+  {
+    "curve_name": "CHF_FWD_6M",
+    "as_of": "2026-06-08",
+    "day_count": "Actual360",
+    "calendar": "TARGET",
+    "compounding": "Simple",
+    "index": "CHFIBOR6M",
+    "pillars": [
+      {
+        "tenor": "6M",
+        "rate": 0.0015,
+        "source": "public CHFIBOR 6M"
+      },
+      {
+        "tenor": "1Y",
+        "rate": 0.0022,
+        "source": "public"
+      },
+      {
+        "tenor": "2Y",
+        "rate": 0.0032,
+        "source": "public"
+      },
+      {
+        "tenor": "3Y",
+        "rate": 0.0042,
+        "source": "public"
+      },
+      {
+        "tenor": "5Y",
+        "rate": 0.0052,
+        "source": "public"
+      },
+      {
+        "tenor": "7Y",
+        "rate": 0.0058,
+        "source": "public"
+      },
+      {
+        "tenor": "10Y",
+        "rate": 0.0064,
+        "source": "public CHFIBOR 10Y proxy"
       }
     ]
   }

@@ -4,7 +4,7 @@ from pathlib import Path
 from classes import Asset
 
 
-from models import hullwhite,barrier_convertible, index_linked, montecarlo, spire, trinomialtree, cln
+from models import hullwhite,barrier_convertible, index_linked, montecarlo, spire, trinomialtree, cln,helper
 try:
     from reporting import pdf_report, json_report
 except ModuleNotFoundError:
@@ -122,6 +122,8 @@ def price_asset(asset: Asset, curve_json: dict, args: argparse.Namespace) -> dic
     Mirrors dispatch_one() but accepts an Asset dataclass instead of a Path,
     so it can be called programmatically without touching the filesystem.
     """
+    if asset.underlying_ts is not None:
+        asset.underlying_volatility = asset.underlying_ts.volatility()
     asset_data = _normalize_dates(asset.to_dict())
     # Always use today as evaluation date when pricer is launched
     from datetime import date as dt_date
@@ -151,16 +153,8 @@ def price_asset(asset: Asset, curve_json: dict, args: argparse.Namespace) -> dic
         effective_model = 'hullwhite'
 
     if effective_model == 'hullwhite':
-        evaluation_date = hullwhite.parse_date(asset_data['evaluation_date'])
-        discount_curve_cfg = hullwhite.select_discount_curve_config(curve_json, asset_data)
-        curve = hullwhite.build_discount_curve(discount_curve_cfg, evaluation_date)
-        result = hullwhite.price_bond(
-            curve,
-            asset_data,
-            curve_json=curve_json,
-            discount_curve_name=discount_curve_cfg.get('curve_name'),
-        )
-        hullwhite.print_bond_result(asset_data, result, curve, curve_json=curve_json)
+        result = hullwhite.price_asset(asset_data, curve_json)
+        hullwhite.print_bond_result(asset_data, result, curve_json=curve_json)
         pdf_path = pdf_report.create_pdf_report(
             model_name='hullwhite',
             instrument_id=instrument_id,
@@ -179,10 +173,7 @@ def price_asset(asset: Asset, curve_json: dict, args: argparse.Namespace) -> dic
         }
 
     if model_name == 'cln':
-        evaluation_date = hullwhite.parse_date(asset_data['evaluation_date'])
-        discount_curve_cfg = hullwhite.select_discount_curve_config(curve_json, asset_data)
-        curve = hullwhite.build_discount_curve(discount_curve_cfg, evaluation_date)
-        result = cln.price_cln(curve, asset_data, curve_json=curve_json)
+        result = cln.price_asset(asset_data, curve_json)
         cln.print_cln_result(asset_data, result)
         pdf_path = pdf_report.create_pdf_report(
             model_name='cln',
@@ -202,7 +193,7 @@ def price_asset(asset: Asset, curve_json: dict, args: argparse.Namespace) -> dic
         }
 
     if model_name == 'spire':
-        result = spire.price_spire_note(asset_data, curve_json)
+        result = spire.price_asset(asset_data, curve_json)
         spire.print_report(asset_data, result)
         pdf_path = pdf_report.create_pdf_report(
             model_name='spire',
@@ -222,7 +213,7 @@ def price_asset(asset: Asset, curve_json: dict, args: argparse.Namespace) -> dic
         }
 
     if model_name == 'index_linked':
-        result = index_linked.price_index_linked_note(asset_data, curve_json)
+        result = index_linked.price_asset(asset_data, curve_json)
         index_linked.print_report(asset_data, result)
         pdf_path = pdf_report.create_pdf_report(
             model_name='index_linked',
@@ -243,7 +234,7 @@ def price_asset(asset: Asset, curve_json: dict, args: argparse.Namespace) -> dic
 
     if model_name in ('barrier_convertible', 'barrier_reverse_convertible'):
         data = apply_mc_overrides(asset_data, args)
-        result = barrier_convertible.price_barrier_convertible(curve_json, data, issuer_spread_bp=args.issuer_spread_bp)
+        result = barrier_convertible.price_asset(data, curve_json, issuer_spread_bp=args.issuer_spread_bp)
         barrier_convertible.print_result(data, result)
         pdf_path = pdf_report.create_pdf_report(
             model_name='barrier_convertible',
@@ -266,7 +257,7 @@ def price_asset(asset: Asset, curve_json: dict, args: argparse.Namespace) -> dic
         data = dict(asset_data)
         if args.tree_steps is not None:
             data['tree_time_steps'] = args.tree_steps
-        result = trinomialtree.price_callable_bond_tree(curve_json, data, issuer_spread_bp=args.issuer_spread_bp)
+        result = trinomialtree.price_asset(data, curve_json, issuer_spread_bp=args.issuer_spread_bp)
         trinomialtree.print_tree_result(data, result)
         pdf_path = pdf_report.create_pdf_report(
             model_name='trinomialtree',
@@ -287,7 +278,7 @@ def price_asset(asset: Asset, curve_json: dict, args: argparse.Namespace) -> dic
 
     if model_name == 'montecarlo':
         data = apply_mc_overrides(asset_data, args)
-        result = montecarlo.price_bond_monte_carlo(curve_json, data, issuer_spread_bp=args.issuer_spread_bp)
+        result = montecarlo.price_asset(data, curve_json, issuer_spread_bp=args.issuer_spread_bp)
         montecarlo.print_mc_result(data, result)
         pdf_path = pdf_report.create_pdf_report(
             model_name='montecarlo',
@@ -311,7 +302,7 @@ def price_asset(asset: Asset, curve_json: dict, args: argparse.Namespace) -> dic
         'Supported values: hullwhite, cln, spire, index_linked, trinomialtree, montecarlo, barrier_convertible.'
     )
 def dispatch_one(bond_file: Path, curve_json, args):
-    bond_data = hullwhite.load_json(bond_file)
+    bond_data = helper.load_json(bond_file)
 
     expected_name = expected_isin_filename(bond_data)
     if expected_name and bond_file.name != expected_name:
@@ -328,166 +319,68 @@ def dispatch_one(bond_file: Path, curve_json, args):
     if model_name == 'bond':
         effective_model = 'hullwhite'
 
-    if effective_model == 'hullwhite':
-        evaluation_date = hullwhite.parse_date(bond_data['evaluation_date'])
-        discount_curve_cfg = hullwhite.select_discount_curve_config(curve_json, bond_data)
-        curve = hullwhite.build_discount_curve(discount_curve_cfg, evaluation_date)
-        result = hullwhite.price_bond(
-            curve,
-            bond_data,
-            curve_json=curve_json,
-            discount_curve_name=discount_curve_cfg.get('curve_name'),
-        )
-        hullwhite.print_bond_result(bond_data, result, curve, curve_json=curve_json)
+    def _return(result, data=None):
+        d = data if data is not None else bond_data
         pdf_path = pdf_report.create_pdf_report(
-            model_name='hullwhite',
-            instrument_id=bond_data.get('instrument_id', 'unknown'),
-            input_payload=bond_data,
+            model_name=effective_model,
+            instrument_id=d.get('instrument_id', 'unknown'),
+            input_payload=d,
             output_payload=result,
         )
         print(f'PDF report: {pdf_path}')
         print()
         return {
             'bond_file': bond_file.name,
-            'instrument_id': bond_data.get('instrument_id'),
+            'instrument_id': d.get('instrument_id'),
             'model': model_name,
-            'currency': bond_data.get('currency'),
+            'currency': d.get('currency'),
             'pdf': str(pdf_path),
             'result': result,
         }
+
+    if effective_model == 'hullwhite':
+        result = hullwhite.price_asset(bond_data, curve_json)
+        hullwhite.print_bond_result(bond_data, result, curve_json=curve_json)
+        return _return(result)
 
     if model_name == 'cln':
-        # Reduced-form credit-linked note pricer
-        evaluation_date = hullwhite.parse_date(bond_data['evaluation_date'])
-        discount_curve_cfg = hullwhite.select_discount_curve_config(curve_json, bond_data)
-        curve = hullwhite.build_discount_curve(discount_curve_cfg, evaluation_date)
-        result = cln.price_cln(curve, bond_data, curve_json=curve_json)
+        result = cln.price_asset(bond_data, curve_json)
         cln.print_cln_result(bond_data, result)
-        pdf_path = pdf_report.create_pdf_report(
-            model_name='cln',
-            instrument_id=bond_data.get('instrument_id', 'unknown'),
-            input_payload=bond_data,
-            output_payload=result,
-        )
-        print(f'PDF report: {pdf_path}')
-        print()
-        return {
-            'bond_file': bond_file.name,
-            'instrument_id': bond_data.get('instrument_id'),
-            'model': model_name,
-            'currency': bond_data.get('currency'),
-            'pdf': str(pdf_path),
-            'result': result,
-        }
+        return _return(result)
 
     if model_name == 'spire':
-        result = spire.price_spire_note(bond_data, curve_json)
+        result = spire.price_asset(bond_data, curve_json)
         spire.print_report(bond_data, result)
-        pdf_path = pdf_report.create_pdf_report(
-            model_name='spire',
-            instrument_id=bond_data.get('instrument_id', 'unknown'),
-            input_payload=bond_data,
-            output_payload=result,
-        )
-        print(f'PDF report: {pdf_path}')
-        print()
-        return {
-            'bond_file': bond_file.name,
-            'instrument_id': bond_data.get('instrument_id'),
-            'model': model_name,
-            'currency': bond_data.get('currency'),
-            'pdf': str(pdf_path),
-            'result': result,
-        }
+        return _return(result)
 
     if model_name == 'index_linked':
-        result = index_linked.price_index_linked_note(bond_data, curve_json)
+        result = index_linked.price_asset(bond_data, curve_json)
         index_linked.print_report(bond_data, result)
-        pdf_path = pdf_report.create_pdf_report(
-            model_name='index_linked',
-            instrument_id=bond_data.get('instrument_id', 'unknown'),
-            input_payload=bond_data,
-            output_payload=result,
-        )
-        print(f'PDF report: {pdf_path}')
-        print()
-        return {
-            'bond_file': bond_file.name,
-            'instrument_id': bond_data.get('instrument_id'),
-            'model': model_name,
-            'currency': bond_data.get('currency'),
-            'pdf': str(pdf_path),
-            'result': result,
-        }
+        return _return(result)
 
-    if model_name == 'barrier_convertible' or model_name == 'barrier_reverse_convertible':
+    if model_name in ('barrier_convertible', 'barrier_reverse_convertible'):
         data = apply_mc_overrides(bond_data, args)
-        result = barrier_convertible.price_barrier_convertible(curve_json, data, issuer_spread_bp=args.issuer_spread_bp)
+        result = barrier_convertible.price_asset(data, curve_json, issuer_spread_bp=args.issuer_spread_bp)
         barrier_convertible.print_result(data, result)
-        pdf_path = pdf_report.create_pdf_report(
-            model_name='barrier_convertible',
-            instrument_id=data.get('instrument_id', 'unknown'),
-            input_payload=data,
-            output_payload=result,
-        )
-        print(f'PDF report: {pdf_path}')
-        print()
-        return {
-            'bond_file': bond_file.name,
-            'instrument_id': data.get('instrument_id'),
-            'model': model_name,
-            'currency': data.get('currency'),
-            'pdf': str(pdf_path),
-            'result': result,
-        }
+        return _return(result, data)
 
     if model_name == 'trinomialtree':
         data = dict(bond_data)
         if args.tree_steps is not None:
             data['tree_time_steps'] = args.tree_steps
-        result = trinomialtree.price_callable_bond_tree(curve_json, data, issuer_spread_bp=args.issuer_spread_bp)
+        result = trinomialtree.price_asset(data, curve_json, issuer_spread_bp=args.issuer_spread_bp)
         trinomialtree.print_tree_result(data, result)
-        pdf_path = pdf_report.create_pdf_report(
-            model_name='trinomialtree',
-            instrument_id=data.get('instrument_id', 'unknown'),
-            input_payload=data,
-            output_payload=result,
-        )
-        print(f'PDF report: {pdf_path}')
-        print()
-        return {
-            'bond_file': bond_file.name,
-            'instrument_id': data.get('instrument_id'),
-            'model': model_name,
-            'currency': data.get('currency'),
-            'pdf': str(pdf_path),
-            'result': result,
-        }
+        return _return(result, data)
 
     if model_name == 'montecarlo':
         data = apply_mc_overrides(bond_data, args)
-        result = montecarlo.price_bond_monte_carlo(curve_json, data, issuer_spread_bp=args.issuer_spread_bp)
+        result = montecarlo.price_asset(data, curve_json, issuer_spread_bp=args.issuer_spread_bp)
         montecarlo.print_mc_result(data, result)
-        pdf_path = pdf_report.create_pdf_report(
-            model_name='montecarlo',
-            instrument_id=data.get('instrument_id', 'unknown'),
-            input_payload=data,
-            output_payload=result,
-        )
-        print(f'PDF report: {pdf_path}')
-        print()
-        return {
-            'bond_file': bond_file.name,
-            'instrument_id': data.get('instrument_id'),
-            'model': model_name,
-            'currency': data.get('currency'),
-            'pdf': str(pdf_path),
-            'result': result,
-        }
+        return _return(result, data)
 
     raise ValueError(
         f'Unsupported model="{model_name}" in {bond_file.name}. '
-        'Supported values: hullwhite, spire, index_linked, trinomialtree, montecarlo.'
+        'Supported values: hullwhite, cln, spire, index_linked, trinomialtree, montecarlo, barrier_convertible.'
     )
 
 
@@ -510,7 +403,7 @@ def run_all_bonds(curve_json, args):
         print(f'JSON summary: {out_path}')
 
 def _normalize_dates(bond_data: dict) -> dict:
-    """Normalize all date fields to DD-MM-YYYY expected by hullwhite.parse_date."""
+    """Normalize all date fields to DD-MM-YYYY expected by helper.parse_date."""
     data = dict(bond_data)
     
     def to_ddmmyyyy(val: str) -> str:

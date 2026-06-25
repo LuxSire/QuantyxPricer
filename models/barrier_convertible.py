@@ -11,9 +11,9 @@ except ModuleNotFoundError:
     import hullwhite
 
 try:
-    from models.helper import today_date_string, today_date_string_iso, normalize_rate, parse_date
+    from models.helper import today_date_string, today_date_string_iso, normalize_rate, parse_date, get_calendar, load_json
 except ModuleNotFoundError:
-    from helper import today_date_string, today_date_string_iso, normalize_rate, parse_date
+    from helper import today_date_string, today_date_string_iso, normalize_rate, parse_date, get_calendar, load_json
 
 try:
     from reporting import pdf_report
@@ -62,7 +62,7 @@ def get_accrued_amount(bond_data, cashflows, evaluation_date):
         return 0.0
     settlement_days = int(bond_data.get('settlement_days', 2))
     calendar_name = bond_data.get('calendar', 'TARGET')
-    settlement_date = hullwhite.get_calendar(calendar_name).advance(evaluation_date, settlement_days, ql.Days)
+    settlement_date = get_calendar(calendar_name).advance(evaluation_date, settlement_days, ql.Days)
     day_count = ql.Actual365Fixed()
     accrued = 0.0
     for i in range(len(cashflows)):
@@ -101,7 +101,7 @@ def discount_date(curve_handle, ql_date):
     return float(curve_handle.discount(ql_date))
 
 
-def price_barrier_convertible(curve_json, bond_data, issuer_spread_bp=None):
+def price_asset(bond_data, curve_json, issuer_spread_bp=None):
     evaluation_date = parse_date(bond_data.get('evaluation_date', today_date_string()))
     ql.Settings.instance().evaluationDate = evaluation_date
 
@@ -117,8 +117,8 @@ def price_barrier_convertible(curve_json, bond_data, issuer_spread_bp=None):
     s0 = float(underlying.get('initial_fixing_level', 0.0))
     if s0 <= 0:
         raise ValueError('underlying.initial_fixing_level is required and must be positive')
-
-    volatility = normalize_rate(underlying.get('volatility', 0.30))
+    _uv = bond_data.get('underlying_volatility')
+    volatility = _uv if _uv is not None else normalize_rate(underlying.get('volatility', 0.30))
     dividend_yield = normalize_rate(underlying.get('dividend_yield', 0.0))
     drift = normalize_rate(underlying.get('drift', 0.0))
 
@@ -149,7 +149,7 @@ def price_barrier_convertible(curve_json, bond_data, issuer_spread_bp=None):
         coupon_pv += cf['amount'] * df
 
     settlement_days = int(bond_data.get('settlement_days', 2))
-    settlement_date = hullwhite.get_calendar(bond_data.get('calendar', 'TARGET')).advance(evaluation_date, settlement_days, ql.Days)
+    settlement_date = get_calendar(bond_data.get('calendar', 'TARGET')).advance(evaluation_date, settlement_days, ql.Days)
     accrued_amount = get_accrued_amount(bond_data, cashflows, evaluation_date)
 
     barrier_start, barrier_end = get_barrier_range(bond_data, evaluation_date, maturity_date)
@@ -247,10 +247,10 @@ def apply_mc_overrides(bond_data, args):
 
 def main():
     args = parse_args()
-    bond_data = hullwhite.load_json(Path(args.bond_file))
-    curve_json = hullwhite.load_json(Path(args.curve_file))
+    bond_data = load_json(Path(args.bond_file))
+    curve_json = load_json(Path(args.curve_file))
     bond_data = apply_mc_overrides(bond_data, args)
-    result = price_barrier_convertible(curve_json, bond_data, issuer_spread_bp=args.issuer_spread_bp)
+    result = price_asset(bond_data, curve_json, issuer_spread_bp=args.issuer_spread_bp)
     print_result(bond_data, result)
 
 

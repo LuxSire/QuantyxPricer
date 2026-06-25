@@ -18,8 +18,8 @@ EODHD_API_URL = 'https://eodhd.com/api/eod'
 
 
 CBONDS_API_URL = "https://ws.cbonds.info/services/json/get_emissions/?lang=eng"
-CBONDS_API_PRICES_URL = "https://ws.cbonds.info/services/json/get_tradings/?lang=eng"
-CBONDS_API_ESTIMATES_URL = "https://ws.cbonds.info/services/json/API_CbondsQuotes/get_cbonds_estimation/?lang=eng"
+CBONDS_API_PRICES_URL = "https://ws.cbonds.info/services/json/get_tradings_new/?lang=eng"
+CBONDS_API_ESTIMATES_URL = "https://ws.cbonds.info/services/json/get_tradings_new/?lang=eng"
 
 CBONDS_LOGIN = (os.getenv('CBONDS_LOGIN') or '').strip()
 CBONDS_PASSWORD = (os.getenv('CBONDS_PASSWORD') or '').strip()
@@ -194,13 +194,7 @@ def fetch_prices_from_cbonds(code: str) -> Optional[Dict[str, Any]]:
                 "order": "desc"
             }
         ],
-        "fields": [
-            {"field": "isin_code"},
-            {"field": "price"},
-            {"field": "yield"},
-            {"field": "trade_date"},
-            {"field": "volume"}
-        ]
+        "fields": []
     }
 
     try:
@@ -273,16 +267,7 @@ def fetch_estimates_from_cbonds(isin_code: str) -> Optional[Dict[str, Any]]:
                 "order": "desc"
             }
         ],
-        "fields": [
-            {"field": "isin_code"},
-            {"field": "date"},
-            {"field": "price_bid"},
-            {"field": "price_ask"},
-            {"field": "price_last"},
-            {"field": "yield_bid"},
-            {"field": "yield_ask"},
-            {"field": "yield_last"}
-        ]
+        "fields": []
     }
 
     try:

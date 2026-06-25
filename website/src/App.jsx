@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import logo from '../logo_q.png'
 import Instrument from './Instrument'
+import TimeSeries from './TimeSeries'
 import Sidebar from './Sidebar'
 import { usePrices } from './hooks/usePrices'
 import { useAsset } from './hooks/useAsset'
@@ -42,6 +43,11 @@ export default function App() {
   const [route, setRoute] = useState(() => {
     const h = window.location.hash || ''
     if (h.startsWith('#/instrument/')) return h.replace('#/instrument/', '')
+    return null
+  })
+  const [tsRoute, setTsRoute] = useState(() => {
+    const h = window.location.hash || ''
+    if (h.startsWith('#/timeseries/')) return h.replace('#/timeseries/', '')
     return null
   })
   
@@ -90,8 +96,9 @@ export default function App() {
   useEffect(() => {
     function onHash() {
       const h = window.location.hash || ''
-      if (h.startsWith('#/instrument/')) setRoute(h.replace('#/instrument/', ''))
-      else setRoute(null)
+      if (h.startsWith('#/instrument/')) { setRoute(h.replace('#/instrument/', '')); setTsRoute(null) }
+      else if (h.startsWith('#/timeseries/')) { setTsRoute(h.replace('#/timeseries/', '')); setRoute(null) }
+      else { setRoute(null); setTsRoute(null) }
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
@@ -135,6 +142,10 @@ export default function App() {
 
   if (error) return <div className="error">Error: {error}</div>
   if (!rows) return <div>Loading data...</div>
+
+  if (tsRoute) {
+    return <TimeSeries instrumentId={tsRoute} apiBase={apiBase} />
+  }
 
   if (route) {
     return <Instrument instrumentId={route} apiBase={apiBase} />
@@ -283,6 +294,16 @@ export default function App() {
                   </button>
                 )
               }}
+              renderRow={(asset) => (
+                <>
+                  <td className="mono">
+                    <a href={`#/timeseries/${asset.instrument_id}`}>{asset.instrument_id}</a>
+                  </td>
+                  <td>{asset.name || ''}</td>
+                  <td>{asset.asset_type || ''}</td>
+                  <td>{asset.currency || ''}</td>
+                </>
+              )}
               emptyMessage="No underlying assets found."
             />
           </div>

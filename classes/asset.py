@@ -2,7 +2,7 @@ import json
 from typing import Optional, Dict, Any, List, Union
 from dataclasses import dataclass, field
 from datetime import datetime
-
+from .price import Prices, TimeSeries
 
 @dataclass
 class Asset:
@@ -11,6 +11,9 @@ class Asset:
     instrument_id: str
     currency: str
     model: Optional[str] = None
+    prices: Optional[Prices] = None
+    ts: Optional[TimeSeries] = None
+    underlying_ts: Optional[TimeSeries] = None
     description: str = ""
     evaluation_date: Optional[str] = None
     issue_date: Optional[str] = None
@@ -31,6 +34,7 @@ class Asset:
     call_price: Optional[float] = None
     target_price: Optional[float] = None
     underlying: Optional['Asset'] = None
+    underlying_volatility: Optional[float] = None
     extra_fields: Dict[str, Any] = field(default_factory=dict)
     
     @classmethod

@@ -303,7 +303,7 @@ def discount_factor_with_issuer_spread(curve, day_count, evaluation_date, target
     return base_df * spread_df
 
 
-def price_note(note_data, curve, curve_day_count, collateral_curve=None, collateral_curve_day_count=None):
+def _price_with_curve(note_data, curve, curve_day_count, collateral_curve=None, collateral_curve_day_count=None):
     eval_date = ql.Settings.instance().evaluationDate
     note_day_count = get_day_count(note_data.get('accrual_day_count', '30/360'))
     coupon_structure = note_data.get('coupon_structure', 'fixed')
@@ -317,7 +317,12 @@ def price_note(note_data, curve, curve_day_count, collateral_curve=None, collate
 
     notional = float(note_data.get('note_notional', 100000000.0))
     coupon_rate = float(note_data['fixed_coupon_rate'])
-    issuer_spread_bp = float(note_data.get('credit_spread_bp', 0.0))
+    collateral_spread_bp = float(
+        note_data.get('collateral_spread_bp')
+        or note_data.get('collateral_spread')
+        or 0.0
+    )
+    issuer_spread_bp = float(note_data.get('credit_spread_bp', 0.0)) + collateral_spread_bp
 
     # Build note dates; for zero_coupon the builder will return only issue and maturity
     dates = build_note_dates(note_data)
@@ -379,7 +384,7 @@ def price_note(note_data, curve, curve_day_count, collateral_curve=None, collate
             if eval_date <= d < maturity_date
         )
 
-    callable_type = note_data.get('callable_type', '').strip().lower()
+    callable_type = (note_data.get('callable_type') or '').strip().lower()
     autocall_trigger = note_data.get('autocall_trigger', {}) or {}
 
     def estimate_forward_dirty_price(collateral_data, collateral_curve, collateral_day_count, call_date, eval_date):
@@ -446,9 +451,12 @@ def price_note(note_data, curve, curve_day_count, collateral_curve=None, collate
         return float(count) / float(paths)
 
     call_redemption_pct = float(note_data.get('issuer_call_redemption_amount_pct', 100.0))
-    maturity_redemption_amount = float(note_data.get('redemption', note_data.get('par', 100.0)))
-    par_amount = float(note_data.get('par', 100.0))
-    maturity_redemption_pct = 100.0 * maturity_redemption_amount / par_amount if par_amount else 100.0
+    if note_data.get('final_redemption_amount_pct') is not None:
+        maturity_redemption_pct = float(note_data['final_redemption_amount_pct'])
+    else:
+        maturity_redemption_amount = float(note_data.get('redemption') or note_data.get('par') or 100.0)
+        par_amount = float(note_data.get('par', 100.0))
+        maturity_redemption_pct = 100.0 * maturity_redemption_amount / par_amount if par_amount else 100.0
 
     # Build call scenarios, evaluating autocall triggers when specified
     call_scenarios = []
@@ -766,7 +774,7 @@ def compute_valuation_adjustments(note_data, curve, curve_day_count):
     }
 
 
-def price_spire_note(note_data, curve_json):
+def price_asset(note_data, curve_json):
     evaluation_date = parse_date(note_data['evaluation_date'])
     note_curve_cfg, note_curve_name = select_note_curve(note_data, curve_json)
     collateral_curve_cfg, collateral_curve_name = select_collateral_curve(note_data, curve_json)
@@ -775,7 +783,7 @@ def price_spire_note(note_data, curve_json):
     note_notional = float(note_data.get('note_notional', 100000000.0))
     issue_price = float(note_data.get('issue_price', 100.0))
 
-    note_leg = price_note(note_data, note_curve, note_curve_day_count, collateral_curve=collateral_curve, collateral_curve_day_count=collateral_curve_day_count)
+    note_leg = _price_with_curve(note_data, note_curve, note_curve_day_count, collateral_curve=collateral_curve, collateral_curve_day_count=collateral_curve_day_count)
     collateral_leg = model_collateral_pv(note_data['collateral'], collateral_curve, collateral_curve_day_count)
     adjustments = compute_valuation_adjustments(note_data, note_curve, note_curve_day_count)
 
@@ -913,7 +921,7 @@ if __name__ == '__main__':
     args = parse_args()
     note_data = load_json(Path(args.bond_file))
     curve_json = load_json(Path(args.curve_file))
-    result = price_spire_note(note_data, curve_json)
+    result = price_asset(note_data, curve_json)
     print_report(note_data, result)
     pdf_path = pdf_report.create_pdf_report(
         model_name='spire',

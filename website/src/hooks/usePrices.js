@@ -247,6 +247,19 @@ export function usePrices(apiBase) {
     }
   }
 
+  const fetchAssetTimeSeries = async (instrumentId) => {
+    if (!instrumentId) return null
+    const endpoint = (apiBase ? `${apiBase}` : '') + `/fetch_asset_timeseries?instrument_id=${encodeURIComponent(instrumentId)}`
+    try {
+      const resp = await fetch(endpoint)
+      if (!resp.ok) return null
+      return await resp.json()
+    } catch (err) {
+      console.error('fetchAssetTimeSeries error', err)
+      return null
+    }
+  }
+
   return {
     rows,
     error,
@@ -258,6 +271,7 @@ export function usePrices(apiBase) {
     downloadPrice,
     downloadAllPrices,
     insertPrices,
-    pricing_single_asset
+    pricing_single_asset,
+    fetchAssetTimeSeries,
   }
 }

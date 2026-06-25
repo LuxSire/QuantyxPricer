@@ -5,6 +5,10 @@ from typing import List, Dict, Any
 import QuantLib as ql
 
 from . import hullwhite
+try:
+    from .helper import get_day_count
+except ImportError:
+    from helper import get_day_count
 
 
 def find_cds_curve_config(curve_json, bond_data):
@@ -71,11 +75,11 @@ def survival_at(t_years: float, segments: List[Dict[str, float]]) -> float:
     return math.exp(-cum)
 
 
-def price_cln(curve, bond_data: Dict[str, Any], curve_json=None):
+def _price_with_curve(curve, bond_data: Dict[str, Any], curve_json=None):
     # Build schedule and basic settings from hullwhite helpers
     schedule, maturity_date = hullwhite.build_coupon_schedule(bond_data)
     eval_date = ql.Settings.instance().evaluationDate
-    day_count = hullwhite.get_day_count(bond_data.get('accrual_day_count', 'Actual365Fixed'))
+    day_count = get_day_count(bond_data.get('accrual_day_count', 'Actual365Fixed'))
     par = float(bond_data.get('par', 100.0))
     recovery = float(bond_data.get('recovery_rate', 0.4))
 
@@ -215,6 +219,13 @@ def price_cln(curve, bond_data: Dict[str, Any], curve_json=None):
     # CLN currently has no issuer call schedule, so YTC is not applicable.
     result['ytc'] = None
     return result
+
+
+def price_asset(bond_data: Dict[str, Any], curve_json):
+    evaluation_date = hullwhite.parse_date(bond_data['evaluation_date'])
+    discount_curve_cfg = hullwhite.select_discount_curve_config(curve_json, bond_data)
+    curve = hullwhite.build_discount_curve(discount_curve_cfg, evaluation_date)
+    return _price_with_curve(curve, bond_data, curve_json=curve_json)
 
 
 def print_cln_result(bond_data, result):

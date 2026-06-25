@@ -11,12 +11,8 @@ try:
         build_discount_curve,
         get_bond_files,
         get_business_day_convention,
-        get_calendar,
         get_coupon_rate,
-        get_day_count,
         get_frequency,
-        load_json,
-        parse_date,
         select_discount_curve_config,
     )
 except ModuleNotFoundError:
@@ -27,14 +23,15 @@ except ModuleNotFoundError:
         build_discount_curve,
         get_bond_files,
         get_business_day_convention,
-        get_calendar,
         get_coupon_rate,
-        get_day_count,
         get_frequency,
-        load_json,
-        parse_date,
         select_discount_curve_config,
     )
+
+try:
+    from models.helper import get_calendar, get_day_count, load_json, parse_date
+except ModuleNotFoundError:
+    from helper import get_calendar, get_day_count, load_json, parse_date
 
 try:
     from reporting import pdf_report
@@ -145,7 +142,7 @@ def build_callable_bond(bond_data, projection_curve, eval_date):
     return bond
 
 
-def price_callable_bond_tree(curve_json, bond_data, issuer_spread_bp=None):
+def price_asset(bond_data, curve_json, issuer_spread_bp=None):
     evaluation_date = parse_date(bond_data['evaluation_date'])
     ql.Settings.instance().evaluationDate = evaluation_date
 
@@ -218,7 +215,7 @@ def run_all_bonds(curve_json, bond_files=None):
     for bond_file in bond_files:
         bond_data = load_json(bond_file)
         try:
-            result = price_callable_bond_tree(curve_json, bond_data)
+            result = price_asset(bond_data, curve_json)
         except Exception as exc:
             print_tree_skip(bond_data, exc)
             continue
@@ -246,7 +243,7 @@ if __name__ == '__main__':
                 bond_data = dict(bond_data)
                 bond_data['tree_time_steps'] = args.tree_steps
             try:
-                result = price_callable_bond_tree(curve_json, bond_data, issuer_spread_bp=args.issuer_spread_bp)
+                result = price_asset(bond_data, curve_json, issuer_spread_bp=args.issuer_spread_bp)
             except Exception as exc:
                 print_tree_skip(bond_data, exc)
                 continue
@@ -265,7 +262,7 @@ if __name__ == '__main__':
         bond_data = dict(bond_data)
         bond_data['tree_time_steps'] = args.tree_steps
 
-    result = price_callable_bond_tree(curve_json, bond_data, issuer_spread_bp=args.issuer_spread_bp)
+    result = price_asset(bond_data, curve_json, issuer_spread_bp=args.issuer_spread_bp)
     print_tree_result(bond_data, result)
     pdf_path = pdf_report.create_pdf_report(
         model_name='trinomialtree',

@@ -1,10 +1,23 @@
 import argparse
 from datetime import date
-import json
+
 import math
 from pathlib import Path
-
+from classes.asset import Asset
 import QuantLib as ql
+
+try:
+    from .helper import (
+        load_json, parse_date, get_calendar, get_day_count,
+        tenor_to_period, tenor_to_years, infer_currency_from_isin,
+        normalize_curve_catalog, select_discount_curve_config, build_discount_curve,
+    )
+except ImportError:
+    from helper import (
+        load_json, parse_date, get_calendar, get_day_count,
+        tenor_to_period, tenor_to_years, infer_currency_from_isin,
+        normalize_curve_catalog, select_discount_curve_config, build_discount_curve,
+    )
 
 try:
     from reporting import pdf_report
@@ -18,89 +31,6 @@ CURVES_DIR = PROJECT_ROOT / 'curves'
 CURVE_FILE = CURVES_DIR / 'swap_curves.json'
 BOND_FILE = ASSETS_DIR / 'XS1693822634.json'
 
-
-def today_date_string():
-    return date.today().strftime('%d-%m-%Y')
-
-
-def apply_runtime_pricing_defaults(data):
-    if isinstance(data, dict) and data.get('instrument_id'):
-        data = dict(data)
-        data['evaluation_date'] = today_date_string()
-    return data
-
-
-def resolve_json_path(path: Path):
-    if path.is_absolute():
-        return path
-
-    candidates = [
-        path,
-        PROJECT_ROOT / path,
-        ASSETS_DIR / path,
-        CURVES_DIR / path,
-    ]
-
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-
-    # If a bare filename is provided, prefer assets for bond JSON and curves for curve JSON.
-    if path.parent == Path('.'):
-        asset_candidate = ASSETS_DIR / path.name
-        if asset_candidate.exists():
-            return asset_candidate
-        curve_candidate = CURVES_DIR / path.name
-        if curve_candidate.exists():
-            return curve_candidate
-
-    return path
-
-
-def load_json(path: Path):
-    path = resolve_json_path(path)
-    with open(path, 'r', encoding='utf-8-sig') as f:
-        content = f.read().strip()
-
-    if not content:
-        raise ValueError(f'JSON file is empty: {path}')
-
-    try:
-        return apply_runtime_pricing_defaults(json.loads(content))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f'Invalid JSON in {path}: {exc}') from exc
-
-
-def parse_date(date_str: str):
-    day, month, year = map(int, date_str.split('-'))
-    return ql.Date(day, month, year)
-
-
-def get_calendar(name: str):
-    calendars = {
-        'TARGET': ql.TARGET,
-        'UnitedStates': lambda: ql.UnitedStates(ql.UnitedStates.GovernmentBond),
-        'TARGET+UnitedStates': ql.TARGET,
-    }
-    if name not in calendars:
-        raise ValueError(f'Unsupported calendar: {name}')
-    return calendars[name]()
-
-
-def get_day_count(name: str):
-    day_counts = {
-        'Actual365Fixed': ql.Actual365Fixed,
-        'Actual360': ql.Actual360,
-        'Thirty360': lambda: ql.Thirty360(ql.Thirty360.BondBasis),
-        '30/360': lambda: ql.Thirty360(ql.Thirty360.BondBasis),
-        'ActualActual': lambda: ql.ActualActual(ql.ActualActual.ISDA),
-        'ACT/ACT': lambda: ql.ActualActual(ql.ActualActual.ISDA),
-        'ACT/ACT (PERIODIC BASIS)': lambda: ql.ActualActual(ql.ActualActual.ISDA),
-        'ACT/ACT (ICMA)': lambda: ql.ActualActual(ql.ActualActual.ISDA),
-    }
-    if name not in day_counts:
-        raise ValueError(f'Unsupported day count: {name}')
-    return day_counts[name]()
 
 
 def get_business_day_convention(name: str):
@@ -168,108 +98,6 @@ def parse_spread_from_denomination(bond_data):
         except Exception:
             pass
     return None
-
-
-def normalize_curve_catalog(curve_json):
-    if isinstance(curve_json, dict):
-        return None
-    if not isinstance(curve_json, list):
-        raise ValueError('Curve file must be a single curve object or a list of curve objects.')
-
-    catalog = {}
-    for entry in curve_json:
-        if not isinstance(entry, dict):
-            continue
-        curve_name = entry.get('curve_name')
-        if not curve_name:
-            continue
-        catalog[curve_name] = entry
-    if not catalog:
-        raise ValueError('No named curves found in curve catalog JSON.')
-    return catalog
-
-
-def infer_currency_from_isin(isin):
-    if not isin:
-        return None
-    prefix = str(isin).strip().upper()[:2]
-    if prefix in {'US', 'XS', 'EU'}:
-        if prefix == 'US':
-            return 'USD'
-        if prefix in {'XS', 'EU'}:
-            return 'EUR'
-    return None
-
-
-def select_discount_curve_config(curve_json, bond_data):
-    catalog = normalize_curve_catalog(curve_json)
-    if catalog is None:
-        return curve_json
-
-    # Allow the curve catalog to explicitly map curves to instruments.
-    # If a curve entry contains an `instruments` or `applies_to` list, and the
-    # bond's `instrument_id` or `isin` appears there, prefer that curve.
-    instr = str(bond_data.get('instrument_id') or bond_data.get('isin') or '').strip()
-    if instr:
-        for name, cfg in catalog.items():
-            applies = cfg.get('instruments') or cfg.get('applies_to') or cfg.get('instrument_ids')
-            if isinstance(applies, (list, tuple)) and instr in [str(x).strip() for x in applies]:
-                return cfg
-
-    requested_name = bond_data.get('discount_curve_name') or bond_data.get('curve_name')
-    if requested_name:
-        if requested_name not in catalog:
-            raise ValueError(f"Requested discount_curve_name not found: {requested_name}")
-        return catalog[requested_name]
-
-    currency = str(
-        bond_data.get('currency')
-        or infer_currency_from_isin(bond_data.get('instrument_id'))
-        or 'EUR'
-    ).upper()
-    default_by_currency = {
-        'EUR': 'EUR_OIS_PROXY',
-        'USD': 'USD_OIS_PROXY',
-    }
-    default_name = default_by_currency.get(currency, 'EUR_OIS_PROXY')
-    if default_name in catalog:
-        return catalog[default_name]
-
-    for name, cfg in catalog.items():
-        if name.upper().startswith(f'{currency}_') and 'OIS' in name.upper() and 'pillars' in cfg:
-            return cfg
-
-    raise ValueError(f'No discount curve available for currency={currency}. Add discount_curve_name in bond JSON.')
-
-
-def tenor_to_period(tenor: str):
-    value = tenor.strip().upper()
-    if value == 'ON':
-        return ql.Period(1, ql.Days)
-    if value.endswith('D'):
-        return ql.Period(int(value[:-1]), ql.Days)
-    if value.endswith('W'):
-        return ql.Period(int(value[:-1]), ql.Weeks)
-    if value.endswith('M'):
-        return ql.Period(int(value[:-1]), ql.Months)
-    if value.endswith('Y'):
-        return ql.Period(int(value[:-1]), ql.Years)
-    raise ValueError(f'Unsupported tenor format: {tenor}')
-
-
-def tenor_to_years(tenor: str):
-    value = tenor.strip().upper()
-    if value == 'ON':
-        return 1.0 / 365.0
-    if value.endswith('D'):
-        return float(value[:-1]) / 365.0
-    if value.endswith('W'):
-        return float(value[:-1]) * 7.0 / 365.0
-    if value.endswith('M'):
-        return float(value[:-1]) / 12.0
-    if value.endswith('Y'):
-        return float(value[:-1])
-    raise ValueError(f'Unsupported tenor format: {tenor}')
 
 
 def select_named_curve_config(curve_json, curve_name):
@@ -640,45 +468,6 @@ def get_coupon_rate(curve, d0, d1, bond_data, eval_date, cms_context=None):
     return rate
 
 
-def build_discount_curve(curve_json, evaluation_date):
-    calendar = get_calendar(curve_json.get('calendar', 'TARGET'))
-    ql.Settings.instance().evaluationDate = evaluation_date
-    day_count = get_day_count(curve_json.get('day_count', 'Actual365Fixed'))
-
-    pillars = curve_json.get('pillars', [])
-    if not pillars:
-        raise ValueError('Selected curve has no pillars.')
-
-    date_rate_pairs = []
-    for p in pillars:
-        period = tenor_to_period(p['tenor'])
-        pillar_date = calendar.advance(evaluation_date, period, ql.Following)
-        date_rate_pairs.append((pillar_date, float(p['rate'])))
-
-    date_rate_pairs.sort(key=lambda x: int(x[0].serialNumber()))
-    unique_dates = {}
-    for d, r in date_rate_pairs:
-        unique_dates[int(d.serialNumber())] = (d, r)
-
-    sorted_pairs = [unique_dates[k] for k in sorted(unique_dates.keys())]
-    first_rate = sorted_pairs[0][1]
-    dates = [evaluation_date]
-    rates = [first_rate]
-    for d, r in sorted_pairs:
-        if d == evaluation_date:
-            rates[0] = r
-            continue
-        dates.append(d)
-        rates.append(r)
-
-    if len(dates) < 2:
-        raise ValueError('Insufficient curve pillars to build term structure.')
-
-    curve = ql.ZeroCurve(dates, rates, day_count, calendar)
-    curve.enableExtrapolation()
-    return curve
-
-
 def build_coupon_schedule(bond_data):
     issue_date = parse_date(bond_data['issue_date'])
     if 'maturity_date' in bond_data:
@@ -871,7 +660,11 @@ def compute_model_ytc_to_first_call(bond_data, first_call_scenario, first_call_d
     )
 
 
-def price_bond(curve, bond_data, curve_json=None, discount_curve_name=None):
+
+def _price_with_curve(curve, asset, curve_json=None, discount_curve_name=None):
+
+    bond_data = asset.to_dict() if (Asset is not None and isinstance(asset, Asset)) else dict(asset)
+
     schedule, maturity_date = build_coupon_schedule(bond_data)
     eval_date = ql.Settings.instance().evaluationDate
     spread_bp = bond_data['credit_spread_bp']
@@ -965,6 +758,19 @@ def price_bond(curve, bond_data, curve_json=None, discount_curve_name=None):
         'scenarios': scenarios,
         'hw_parameters': hw_params,
     }
+
+
+def price_asset(bond_data, curve_json, discount_curve_name=None):
+    evaluation_date = parse_date(bond_data['evaluation_date'])
+    discount_curve_cfg = select_discount_curve_config(curve_json, bond_data)
+    curve = build_discount_curve(discount_curve_cfg, evaluation_date)
+    if discount_curve_name is None:
+        discount_curve_name = discount_curve_cfg.get('curve_name')
+    return _price_with_curve(curve, bond_data, curve_json=curve_json, discount_curve_name=discount_curve_name)
+
+
+def price_bond(curve, bond_data, curve_json=None, discount_curve_name=None):
+    return _price_with_curve(curve, Asset.from_dict(bond_data), curve_json=curve_json, discount_curve_name=discount_curve_name)
 
 
 def get_model_price(result):
@@ -1086,6 +892,10 @@ def print_bond_result(bond_data, result, curve=None, curve_json=None):
         if cms_vol_enabled:
             print(f"CMS vol surface: {cms_vol_name}")
 
+    if 'market_price' in bond_data and curve is None and curve_json is not None:
+        _eval = parse_date(bond_data['evaluation_date'])
+        _cfg = select_discount_curve_config(curve_json, bond_data)
+        curve = build_discount_curve(_cfg, _eval)
     if 'market_price' in bond_data and curve is not None:
         market_price = float(bond_data['market_price'])
         market_price_amount = pct_to_amount(market_price, bond_data)

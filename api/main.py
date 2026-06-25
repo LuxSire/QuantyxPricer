@@ -3,7 +3,9 @@ import logging
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+API_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(API_DIR))
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
@@ -19,8 +21,8 @@ import subprocess, sys
 import threading
 import uuid
 from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
-from classes import Price, Prices, Asset, Assets
-
+from classes import  Prices, Asset, Assets,TS_Dict
+from models import helper
 import db
 import provider
 import pricer
@@ -102,12 +104,28 @@ async def initialize_data():
         prices = Prices()
 
     try:
+        loaded_timeseries = await fetch_timeseries()
+        timeseries = TS_Dict.from_data(loaded_timeseries)
+        
+        print(f"[API] Loaded {len(timeseries)} time series from database")
+    except Exception as e:
+        print(f"[API] Warning: could not load time series at startup: {e}")
+        timeseries = TS_Dict()
+
+    try:
         for asset in assets.values():
+            asset.prices=prices.get(asset.instrument_id)  # Attach prices if available
             if hasattr(asset, 'underlying') and asset.underlying is not None:
                 # asset.underlying is already an Asset instance created by Asset.from_dict()
                 key = asset.underlying.instrument_id
+                asset.underlying_ts = timeseries.get(key)  # Attach underlying's prices (was incorrectly using asset.instrument_id)
+                print(f"[API] initialize_data: asset={asset.instrument_id} underlying_prices_in_db={timeseries.get(key) is not None}")
                 if key:
                     underlying_assets[key] = asset.underlying
+                    underlying_assets[key].ts = asset.underlying_ts  # Attach prices if available
+                    _ts = underlying_assets[key].ts
+                    _vol = _ts.volatility() if _ts is not None else 'N/A'
+                    print(f"[API] initialize_data: underlying_asset={key} prices_set={_ts is not None} volatility={_vol}")
             print(f"[API] Extracted {len(underlying_assets)} underlying assets")
     except Exception as e:
         print(f"[API] Warning: could not extract underlying assets: {e}")
@@ -563,6 +581,28 @@ async def fetch_prices():
         print(f"[API] Error fetching prices from database: {e}")
         raise HTTPException(status_code=500, detail='Could not fetch prices from database')
 
+@app.get('/fetch_asset_timeseries', tags=['Pricing'], summary='Fetch time series for an underlying asset by instrument_id')
+async def fetch_asset_timeseries(instrument_id: str):
+    if not instrument_id or not instrument_id.strip():
+        raise HTTPException(status_code=400, detail='instrument_id is required')
+  
+    asset = underlying_assets[instrument_id]
+    if asset is None:
+        raise HTTPException(status_code=404, detail=f'Underlying asset not found: {instrument_id}')
+    ts = asset.ts
+    if ts is None:
+        raise HTTPException(status_code=404, detail=f'No time series available for {instrument_id}')
+    return ts.to_list()
+
+
+@app.get('/fetch_timeseries', tags=['Pricing'], summary='Fetch all time series from MySQL')
+async def fetch_timeseries():
+    try:
+        timeseries = db.select_timeseries()
+        return timeseries
+    except Exception as e:
+        print(f"[API] Error fetching time series from database: {e}")
+        raise HTTPException(status_code=500, detail='Could not fetch time series from database')
 
 @app.post('/insert_prices', tags=['Pricing'], summary='Insert prices JSON into MySQL')
 async def insert_prices(request: Request, payload: Any = None):
@@ -710,7 +750,7 @@ async def price(payload: PriceRequest):
     print(f"[/price] Loading curve from {pricer.DEFAULT_CURVE_FILE}")
     curve_path = pricer.resolve_curve_path(str(pricer.DEFAULT_CURVE_FILE))
     try:
-        curve_json = pricer.hullwhite.load_json(curve_path)
+        curve_json = helper.load_json(curve_path)
         print(f"[/price] Curve loaded successfully from {curve_path}")
     except Exception as e:
         print(f"[/price] ERROR loading curve: {type(e).__name__}: {e}")
@@ -728,12 +768,8 @@ async def price(payload: PriceRequest):
     # Price the asset
     print(f"[/price] Calling price_asset for {instr} with model={_asset.model}")
     asset_data=_asset.to_dict()
-    print(f"[/price] bond_data evaluation_date={asset_data.get('evaluation_date')!r}")
-    print(f"[/price] bond_data maturity_date={asset_data.get('maturity_date')!r}")
-    print(f"[/price] bond_data issue_date={asset_data.get('issue_date')!r}")
-    print(f"[/price] bond_data first_coupon_date={asset_data.get('first_coupon_date')!r}")
-    print(f"[/price] bond_data call_dates={asset_data.get('call_dates')!r}")
-    print(f"[/price] Full bond_data: {asset_data}")  
+    import json as _json
+    print(f"[/price] bond_data (full input):\n{_json.dumps(asset_data, indent=2, default=str)}")
     try:
         result = pricer.price_asset(_asset, curve_json, args)
         print(f"[/price] Pricing succeeded for {instr}: {list(result.keys()) if isinstance(result, dict) else result}")
@@ -852,36 +888,10 @@ async def fetch_underlying_assets():
         raise HTTPException(status_code=500, detail='Could not fetch underlying assets')
 
 
-@app.get('/fetch_noprice_assets', tags=['Assets'], summary='List asset instrument_ids not present in prices.json')
+@app.get('/fetch_noprice_assets', tags=['Assets'], summary='List asset instrument_ids not present in prices cache')
 async def fetch_noprice_assets():
-    out_path = PROJECT_ROOT / 'output' / 'prices.json'
-    if not out_path.exists():
-        raise HTTPException(status_code=404, detail='prices.json not found')
-
-    try:
-        with open(out_path, 'r') as f:
-            price_rows = json.load(f)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f'Could not read prices.json: {e}')
-
-    priced_ids = set()
-    if isinstance(price_rows, list):
-        for row in price_rows:
-            if not isinstance(row, dict):
-                continue
-            instrument_id = row.get('instrument_id') or (row.get('result') or {}).get('instrument_id')
-            bond_file = row.get('bond_file')
-            if instrument_id:
-                priced_ids.add(str(instrument_id))
-            if bond_file:
-                priced_ids.add(Path(str(bond_file)).stem)
-
-    missing_ids = []
-    for asset_path in sorted(ASSETS_DIR.glob('*.json')):
-        asset_id = asset_path.stem
-        if asset_id not in priced_ids:
-            missing_ids.append(asset_id)
-
+    priced_ids = set(prices.keys())
+    missing_ids = [iid for iid in assets.keys() if iid not in priced_ids]
     return {
         'missing_instrument_ids': missing_ids,
         'count': len(missing_ids),

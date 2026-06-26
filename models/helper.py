@@ -10,6 +10,7 @@ across the models/ folder.
 
 from datetime import date
 import json
+import math
 from pathlib import Path
 import QuantLib as ql
 
@@ -50,15 +51,6 @@ def apply_runtime_pricing_defaults(data):
         data = dict(data)
         data['evaluation_date'] = today_date_string()
     return data
-
-def today_date_string():
-    return date.today().strftime('%d-%m-%Y')
-
-
-
-def parse_date(date_str: str):
-    day, month, year = map(int, date_str.split('-'))
-    return ql.Date(day, month, year)
 
 
 def get_calendar(name: str):
@@ -276,3 +268,256 @@ def build_discount_curve(curve_json, evaluation_date):
     curve = ql.ZeroCurve(dates, rates, day_count, calendar)
     curve.enableExtrapolation()
     return curve
+
+
+# ---------------------------------------------------------------------------
+# Structured-note shared utilities
+# (used by both spire.py and index_linked.py)
+# ---------------------------------------------------------------------------
+
+def get_frequency(name: str):
+    frequencies = {
+        'Annual': ql.Annual,
+        'Semiannual': ql.Semiannual,
+        'Quarterly': ql.Quarterly,
+        'Monthly': ql.Monthly,
+    }
+    if name not in frequencies:
+        raise ValueError(f'Unsupported frequency: {name}')
+    return frequencies[name]
+
+
+def get_business_day_convention(name: str):
+    conventions = {
+        'Following': ql.Following,
+        'ModifiedFollowing': ql.ModifiedFollowing,
+        'Unadjusted': ql.Unadjusted,
+    }
+    if name not in conventions:
+        raise ValueError(f'Unsupported business day convention: {name}')
+    return conventions[name]
+
+
+def build_regular_schedule(start_date, end_date, frequency_name, calendar_name, bdc_name):
+    frequency  = get_frequency(frequency_name)
+    calendar   = get_calendar(calendar_name)
+    convention = get_business_day_convention(bdc_name)
+    return ql.Schedule(
+        start_date,
+        end_date,
+        ql.Period(frequency),
+        calendar,
+        convention,
+        convention,
+        ql.DateGeneration.Forward,
+        False,
+    )
+
+
+def build_note_dates(note_data):
+    """Return the list of ql.Date schedule dates for a structured note."""
+    issue_date    = parse_date(note_data['issue_date'])
+    maturity_date = parse_date(note_data['maturity_date'])
+
+    if 'first_coupon_date' in note_data:
+        dates   = [issue_date, parse_date(note_data['first_coupon_date'])]
+        current = dates[-1]
+        while current < maturity_date:
+            next_date = ql.Date(current.dayOfMonth(), current.month(), current.year() + 1)
+            if next_date > maturity_date:
+                next_date = maturity_date
+            dates.append(next_date)
+            current = next_date
+        return dates
+
+    freq = note_data.get('coupon_frequency', 'Annual')
+    if freq is None or str(freq).strip().lower() in {'none', 'null', ''}:
+        return [issue_date, maturity_date]
+
+    schedule = build_regular_schedule(
+        issue_date,
+        maturity_date,
+        freq,
+        note_data.get('calendar', 'TARGET'),
+        note_data.get('business_day_convention', 'Following'),
+    )
+    return [schedule[i] for i in range(len(schedule))]
+
+
+def discount_factor_with_issuer_spread(curve, day_count, evaluation_date, target_date, issuer_spread_bp):
+    t = day_count.yearFraction(evaluation_date, target_date)
+    if t < 0.0:
+        return 0.0
+    return curve.discount(target_date) * math.exp(-(issuer_spread_bp / 10000.0) * t)
+
+
+def inflation_factor(eval_date, pay_date, inflation_assumption):
+    """Project the index ratio at pay_date using a flat annual growth assumption."""
+    if pay_date <= eval_date:
+        return float(inflation_assumption.get('index_ratio_at_eval', 1.0))
+    base_ratio   = float(inflation_assumption.get('index_ratio_at_eval', 1.0))
+    annual_infl  = float(inflation_assumption.get('annual_inflation_rate', 0.02))
+    yf           = ql.Actual365Fixed().yearFraction(eval_date, pay_date)
+    return base_ratio * ((1.0 + annual_infl) ** yf)
+
+
+def _select_from_catalog(curve_json, requested_name=None, default_currency='EUR'):
+    catalog = normalize_curve_catalog(curve_json)
+    if catalog is None:
+        return curve_json
+    if requested_name:
+        if requested_name not in catalog:
+            raise ValueError(f'Requested curve_name not found: {requested_name}')
+        return catalog[requested_name]
+    default_name = f'{default_currency.upper()}_OIS_PROXY'
+    if default_name in catalog:
+        return catalog[default_name]
+    for name, cfg in catalog.items():
+        upper = name.upper()
+        if upper.startswith(f'{default_currency.upper()}_') and 'OIS' in upper and 'pillars' in cfg:
+            return cfg
+    raise ValueError(f'No default OIS curve found for currency={default_currency}.')
+
+
+def select_note_curve(note_data, curve_json):
+    """Return (curve_config, curve_name) for the note leg."""
+    requested = note_data.get('discount_curve_name') or note_data.get('note_discount_curve_name')
+    currency  = str(note_data.get('currency', 'EUR')).upper()
+    cfg       = _select_from_catalog(curve_json, requested_name=requested, default_currency=currency)
+    return cfg, cfg.get('curve_name', 'UNNAMED_CURVE')
+
+
+def select_collateral_curve(note_data, curve_json):
+    """Return (curve_config, curve_name) for the collateral leg."""
+    collateral = note_data.get('collateral', {})
+    requested  = collateral.get('discount_curve_name')
+    currency   = (
+        collateral.get('currency')
+        or note_data.get('csa', {}).get('base_currency')
+        or infer_currency_from_isin(collateral.get('isin'))
+        or note_data.get('currency')
+        or 'EUR'
+    )
+    cfg = _select_from_catalog(curve_json, requested_name=requested, default_currency=str(currency).upper())
+    return cfg, cfg.get('curve_name', 'UNNAMED_CURVE')
+
+
+def model_collateral_pv(collateral_data, curve, curve_day_count):
+    """Price the collateral bond and return PV in absolute terms."""
+    eval_date    = ql.Settings.instance().evaluationDate
+    issue_date   = parse_date(collateral_data['issue_date'])
+    maturity_date = parse_date(collateral_data['maturity_date'])
+    principal    = float(collateral_data['principal_amount'])
+    spread_bp    = float(collateral_data.get('collateral_spread_bp',
+                         collateral_data.get('collateral_spread', 0.0)))
+
+    explicit_rate = collateral_data.get('coupon_rate')
+    tranches      = collateral_data.get('tranches')
+    if explicit_rate is not None:
+        coupon_rate = float(explicit_rate)
+    elif tranches:
+        total_principal = 0.0
+        coupon_rate     = 0.0
+        for tr in tranches:
+            tp   = float(tr.get('principal', 0.0))
+            ctype = tr.get('coupon_type', 'fixed')
+            if ctype in ('inflation_linked', 'fixed'):
+                tc = float(tr.get('coupon_rate', 0.0))
+            elif ctype == 'floating':
+                tc = 0.03 + float(tr.get('coupon_spread_bp', 0.0)) / 10000.0
+            else:
+                tc = 0.0
+            coupon_rate     += tp * tc
+            total_principal += tp
+        coupon_rate = coupon_rate / total_principal if total_principal > 0 else 0.0
+    else:
+        coupon_rate = 0.0
+
+    schedule = build_regular_schedule(
+        issue_date,
+        maturity_date,
+        collateral_data.get('coupon_frequency', 'Semiannual'),
+        collateral_data.get('calendar', 'TARGET'),
+        collateral_data.get('business_day_convention', 'Following'),
+    )
+    day_count          = get_day_count(collateral_data.get('day_count', 'ActualActual'))
+    inflation_assump   = collateral_data.get('inflation_assumption', {})
+
+    pv_model  = 0.0
+    cashflows = []
+    for i in range(1, len(schedule)):
+        d0 = schedule[i - 1]
+        d1 = schedule[i]
+        if d1 <= eval_date:
+            continue
+        accrual    = day_count.yearFraction(d0, d1)
+        idx_ratio  = inflation_factor(eval_date, d1, inflation_assump)
+        coupon_cf  = principal * coupon_rate * accrual * idx_ratio
+        df         = discount_factor_with_issuer_spread(curve, curve_day_count, eval_date, d1, spread_bp)
+        pv_cf      = coupon_cf * df
+        pv_model  += pv_cf
+        cashflows.append({'date': d1.ISO(), 'type': 'coupon', 'amount': coupon_cf, 'df': df, 'pv': pv_cf})
+
+    if maturity_date > eval_date:
+        idx_ratio_mat = inflation_factor(eval_date, maturity_date, inflation_assump)
+        redemption_cf = principal * idx_ratio_mat
+        df_mat        = discount_factor_with_issuer_spread(curve, curve_day_count, eval_date, maturity_date, spread_bp)
+        pv_red        = redemption_cf * df_mat
+        pv_model     += pv_red
+        cashflows.append({'date': maturity_date.ISO(), 'type': 'redemption',
+                          'amount': redemption_cf, 'df': df_mat, 'pv': pv_red})
+
+    market_dirty = collateral_data.get('market_dirty_price')
+    if market_dirty is not None:
+        pv_collateral     = principal * float(market_dirty) / 100.0
+        valuation_method  = 'market_dirty_price'
+    else:
+        pv_collateral     = pv_model
+        valuation_method  = 'model_curve_plus_inflation'
+
+    return {
+        'pv_collateral':         pv_collateral,
+        'pv_collateral_model':   pv_model,
+        'valuation_method':      valuation_method,
+        'cashflows':             cashflows,
+    }
+
+
+def spread_cost_from_schedule(notional, schedule_dates, eval_date, curve, curve_day_count, spread_bp):
+    spread = spread_bp / 10000.0
+    pv     = 0.0
+    for i in range(1, len(schedule_dates)):
+        d0 = schedule_dates[i - 1]
+        d1 = schedule_dates[i]
+        if d1 <= eval_date:
+            continue
+        dt  = curve_day_count.yearFraction(max(d0, eval_date), d1)
+        df  = curve.discount(d1)
+        pv += notional * spread * dt * df
+    return pv
+
+
+def compute_valuation_adjustments(note_data, curve, curve_day_count):
+    """Return PV of fees, funding, CSA, and residual-basis adjustments."""
+    eval_date    = ql.Settings.instance().evaluationDate
+    notional     = float(note_data.get('note_notional', 100_000_000.0))
+    sched_dates  = build_note_dates(note_data)
+
+    va              = note_data.get('valuation_adjustments', {})
+    fees_bp         = float(va.get('fees_bp',          0.0))
+    funding_bp      = float(va.get('funding_bp',       0.0))
+    csa_bp          = float(va.get('csa_bp',           0.0))
+    residual_bp     = float(va.get('residual_basis_bp',0.0))
+
+    fees     = spread_cost_from_schedule(notional, sched_dates, eval_date, curve, curve_day_count, fees_bp)
+    funding  = spread_cost_from_schedule(notional, sched_dates, eval_date, curve, curve_day_count, funding_bp)
+    csa      = spread_cost_from_schedule(notional, sched_dates, eval_date, curve, curve_day_count, csa_bp)
+    residual = spread_cost_from_schedule(notional, sched_dates, eval_date, curve, curve_day_count, residual_bp)
+
+    return {
+        'pv_fees':             fees,
+        'pv_funding':          funding,
+        'pv_csa':              csa,
+        'pv_residual_basis':   residual,
+        'pv_total_adjustments': fees + funding + csa + residual,
+    }

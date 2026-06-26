@@ -1,0 +1,170 @@
+{
+  "model": "clo",
+  "description": "CLO tranche and leveraged loan pricer sharing the same floating-rate projection engine. For clo_tranche: models a two-phase CLO (reinvestment + amortisation) with pool-level CDR defaults, a simplified OC-test waterfall, and sequential principal distribution. For leveraged_loan: prices a single amortising floating-rate loan (TLB/TLA/unitranche) using the same forward-rate curve, with optional SOFR/Euribor floor and TLB-style scheduled amortisation.",
+  "required_fields": [
+    {
+      "name": "instrument_id",
+      "type": "string",
+      "description": "ISIN or internal identifier"
+    },
+    {
+      "name": "evaluation_date",
+      "type": "string",
+      "description": "Pricing date (DD-MM-YYYY or YYYY-MM-DD)"
+    },
+    {
+      "name": "instrument_type",
+      "type": "string",
+      "description": "Payoff structure — determines which fields are required",
+      "enum": ["clo_tranche", "leveraged_loan"]
+    },
+    {
+      "name": "maturity_date",
+      "type": "string",
+      "description": "Legal final maturity (DD-MM-YYYY or YYYY-MM-DD)"
+    },
+    {
+      "name": "credit_spread_bp",
+      "type": "float",
+      "description": "Z-spread (clo_tranche) or discount margin (leveraged_loan) over the benchmark curve in basis points. For a floating-rate loan the z-spread equals the DM when projecting and discounting off the same curve."
+    },
+    {
+      "name": "pool_par_balance",
+      "type": "float",
+      "description": "[clo_tranche only] Current outstanding pool par balance"
+    },
+    {
+      "name": "pool_was",
+      "type": "float",
+      "description": "[clo_tranche only] Weighted average spread of the collateral pool over the reference rate (decimal or %, e.g. 0.035 = 3.50%)"
+    },
+    {
+      "name": "pool_cdr",
+      "type": "float",
+      "description": "[clo_tranche only] Annual conditional default rate of the pool (decimal or %, e.g. 0.02 = 2%)"
+    },
+    {
+      "name": "reinvestment_end_date",
+      "type": "string",
+      "description": "[clo_tranche only] End of the reinvestment period (DD-MM-YYYY or YYYY-MM-DD). During reinvestment, pool principal is recycled and investors receive only interest."
+    },
+    {
+      "name": "tranche_balance",
+      "type": "float",
+      "description": "[clo_tranche only] Outstanding notional of the tranche being priced"
+    },
+    {
+      "name": "tranche_spread",
+      "type": "float",
+      "description": "[clo_tranche only] Spread of this tranche over the reference rate (decimal or %, e.g. 0.0135 = 135 bp)"
+    },
+    {
+      "name": "oc_threshold",
+      "type": "float",
+      "description": "[clo_tranche only] Overcollateralisation ratio trigger (e.g. 1.25 = 125%). If pool_balance / total_rated_notes falls below this level, junior interest is diverted to senior principal."
+    },
+    {
+      "name": "credit_support_pct",
+      "type": "float",
+      "description": "[clo_tranche only] Total subordination below this tranche as % of pool balance (equity + junior tranches). Absorbs credit losses before they reach this tranche."
+    },
+    {
+      "name": "loan_balance",
+      "type": "float",
+      "description": "[leveraged_loan only] Outstanding principal of the loan"
+    },
+    {
+      "name": "spread",
+      "type": "float",
+      "description": "[leveraged_loan only] Spread over the reference rate (SOFR/Euribor) (decimal or %, e.g. 0.04 = S+400 bp)"
+    }
+  ],
+  "optional_fields": [
+    {
+      "name": "coupon_frequency",
+      "type": "string",
+      "default": "Quarterly",
+      "description": "Payment frequency (default Quarterly — standard for both CLO tranches and leveraged loans)",
+      "enum": ["Quarterly", "Monthly", "Semiannual"]
+    },
+    {
+      "name": "settlement_days",
+      "type": "int",
+      "default": 2,
+      "description": "Days to settlement (default 2)"
+    },
+    {
+      "name": "calendar",
+      "type": "string",
+      "default": "TARGET",
+      "description": "Business day calendar (default TARGET)",
+      "enum": ["TARGET", "UnitedStates"]
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "default": null,
+      "description": "Settlement currency (e.g. EUR, USD) — used for benchmark discount curve selection"
+    },
+    {
+      "name": "description",
+      "type": "string",
+      "default": null,
+      "description": "Human-readable name"
+    },
+    {
+      "name": "pool_recovery_rate",
+      "type": "float",
+      "default": 0.65,
+      "description": "[clo_tranche only] Recovery rate on defaulted loans (default 0.65 = 65%)"
+    },
+    {
+      "name": "pool_cpr",
+      "type": "float",
+      "default": 0.15,
+      "description": "[clo_tranche only] Annual voluntary loan prepayment / repayment rate during the amortisation phase (default 0.15 = 15%)"
+    },
+    {
+      "name": "pool_wal",
+      "type": "float",
+      "default": 3.0,
+      "description": "[clo_tranche only] Expected WAL of remaining pool collateral after the reinvestment period ends, in years. Used to derive the linear amortisation rate in the amortisation phase (default 3.0)"
+    },
+    {
+      "name": "equity_pct",
+      "type": "float",
+      "default": 10.0,
+      "description": "[clo_tranche only] Equity / first-loss tranche as % of pool balance. Used to derive total_rated_notes = pool_balance × (1 − equity_pct/100) for the OC test denominator (default 10.0)"
+    },
+    {
+      "name": "senior_notes_balance",
+      "type": "float",
+      "default": 0.0,
+      "description": "[clo_tranche only] Aggregate outstanding balance of tranches senior to this one. Senior tranches receive all pool principal first in the sequential waterfall (default 0 = this is the most senior rated tranche)"
+    },
+    {
+      "name": "tranche_is_senior",
+      "type": "bool",
+      "default": false,
+      "description": "[clo_tranche only] True if this is the most senior rated tranche. When True, OC test failures accelerate principal to this tranche rather than deferring its interest (default False)"
+    },
+    {
+      "name": "management_fee_bp",
+      "type": "float",
+      "default": 25.0,
+      "description": "[clo_tranche only] Senior management fee in basis points per annum deducted from pool income before the interest waterfall (default 25 bp)"
+    },
+    {
+      "name": "floor_rate",
+      "type": "float",
+      "default": 0.0,
+      "description": "[leveraged_loan only] Reference rate floor (e.g. 0.005 = 50 bp SOFR floor). The effective rate each period is max(forward_rate, floor_rate). Floor-active periods are flagged in the output (default 0 = no floor)"
+    },
+    {
+      "name": "annual_amortisation_pct",
+      "type": "float",
+      "default": 1.0,
+      "description": "[leveraged_loan only] Scheduled principal amortisation per year as a percentage of the original loan_balance. 1.0 = TLB convention (1% p.a. amortisation, remainder as bullet at maturity). Set to 0 for a pure bullet loan (default 1.0)"
+    }
+  ]
+}

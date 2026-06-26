@@ -50,48 +50,75 @@ Credit losses
   Credit support (equity + junior tranches below this one) absorbs losses first.
   Any loss in excess of credit support reduces the tranche balance.
 
+Instrument types (instrument_type — required)
+---------------------------------------------
+  clo_tranche       Rated CLO note. Requires pool_par_balance, pool_was,
+                    pool_cdr, reinvestment_end_date, tranche_balance,
+                    tranche_spread, oc_threshold, credit_support_pct.
+
+  leveraged_loan    Single amortising floating-rate loan (TLB / TLA / unitranche).
+                    Uses the same forward-rate projection engine as the CLO but
+                    without a pool or waterfall. Requires loan_balance, spread,
+                    maturity_date only. Supports a SOFR/Euribor floor and
+                    scheduled amortisation (TLB convention: 1% p.a.).
+
+Leveraged loan mechanics
+------------------------
+  Each period [d0, d1]:
+    floored_rate = max(fwd_rate(d0, d1), floor_rate)
+    interest(t)  = loan_balance(t) × (floored_rate + spread) × accrual
+    amort(t)     = loan_balance × annual_amortisation_pct / 100 / periods_per_year
+                   (full bullet for the last period)
+    CF(t)        = interest(t) + amort(t)
+
+  DM = issuer_spread_bp (for a floating-rate loan the z-spread equals the
+  discount margin when projected and discounted off the same benchmark curve).
+
 Required JSON fields
 --------------------
   instrument_id         ISIN or internal identifier
   evaluation_date       Pricing date (DD-MM-YYYY or YYYY-MM-DD)
-  reinvestment_end_date End of reinvestment period (DD-MM-YYYY or YYYY-MM-DD)
+  instrument_type       clo_tranche | leveraged_loan
   maturity_date         Legal final maturity (DD-MM-YYYY or YYYY-MM-DD)
-  pool_par_balance      Current outstanding pool par balance
-  pool_was              Weighted average spread of the pool over the reference
-                        rate (decimal or %, e.g. 0.035 for 3.50%)
-  pool_cdr              Annual conditional default rate of the pool
-                        (decimal or %, e.g. 0.02 for 2%)
-  tranche_balance       Outstanding notional of the tranche being priced
-  tranche_spread        Spread of this tranche over the reference rate
-                        (decimal or %, e.g. 0.0135 for 135 bp)
-  oc_threshold          OC ratio trigger for this tranche (e.g. 1.25 = 125%)
-  credit_support_pct    Total subordination below this tranche as % of pool
-                        balance (equity + junior tranches)
-  credit_spread_bp      Additional z-spread for discounting (issuer / structural
-                        spread) in basis points
+  credit_spread_bp      Z-spread / DM for discounting in basis points
+
+  For clo_tranche only:
+    reinvestment_end_date  End of reinvestment period
+    pool_par_balance       Current outstanding pool par balance
+    pool_was               Pool weighted average spread (decimal or %)
+    pool_cdr               Annual conditional default rate (decimal or %)
+    tranche_balance        Outstanding notional of the tranche
+    tranche_spread         Spread over the reference rate (decimal or %)
+    oc_threshold           OC ratio trigger (e.g. 1.25 = 125%)
+    credit_support_pct     Subordination below this tranche as % of pool balance
+
+  For leveraged_loan only:
+    loan_balance           Outstanding principal of the loan
+    spread                 Spread over the reference rate (decimal or %)
 
 Optional JSON fields
 --------------------
-  pool_recovery_rate    Recovery on defaulted loans (default 0.65)
-  pool_cpr              Annual loan prepayment / voluntary-repayment rate
-                        (default 0.15 — 15% CPR for leveraged loans)
-  pool_wal              Expected WAL of remaining pool collateral after
-                        reinvestment ends, in years (default 3.0)
-  equity_pct            Equity / first-loss piece as % of pool balance;
-                        used to derive total_rated_notes for OC test
-                        (default 10.0)
-  senior_notes_balance  Aggregate balance of tranches senior to this one;
-                        paid before this tranche in the sequential waterfall
-                        (default 0)
-  tranche_is_senior     True if this tranche is the most senior rated class and
-                        benefits from OC-test diversion (default False)
   coupon_frequency      Quarterly (default) | Monthly | Semiannual
-  management_fee_bp     Senior management fee in bp p.a. deducted from pool
-                        income before the interest waterfall (default 25)
   settlement_days       Days to settlement (default 2)
   calendar              TARGET | UnitedStates (default TARGET)
   currency              For discount curve selection (e.g. EUR, USD)
   description           Human-readable name
+
+  For clo_tranche only:
+    pool_recovery_rate    Recovery on defaulted loans (default 0.65)
+    pool_cpr              Annual loan prepayment rate (default 0.15)
+    pool_wal              Expected pool WAL post-reinvestment in years (default 3.0)
+    equity_pct            Equity tranche as % of pool — used for OC denominator
+                          (default 10.0)
+    senior_notes_balance  Aggregate balance of senior tranches (default 0)
+    tranche_is_senior     True if this is the most senior rated tranche (default False)
+    management_fee_bp     Senior management fee in bp p.a. (default 25)
+
+  For leveraged_loan only:
+    floor_rate            Reference rate floor — e.g. 0.005 = 50 bp SOFR floor
+                          (default 0)
+    annual_amortisation_pct  Scheduled principal amortisation per year as % of
+                             original balance — 1.0 = TLB convention (default 1.0)
 """
 
 import argparse
@@ -308,6 +335,68 @@ def _simulate(bond_data, curve, evaluation_date, settlement_date, calendar):
 
 
 # ---------------------------------------------------------------------------
+# Leveraged loan cash flow generator
+# ---------------------------------------------------------------------------
+
+def _price_leveraged_loan(bond_data, curve, evaluation_date, calendar):
+    """Generate periodic cash flows for a single amortising floating-rate loan."""
+    maturity_date = parse_date(bond_data['maturity_date'])
+    loan_balance  = float(bond_data['loan_balance'])
+    spread        = normalize_rate(bond_data['spread'])
+    floor_rate    = normalize_rate(bond_data.get('floor_rate', 0.0))
+    annual_amort  = float(bond_data.get('annual_amortisation_pct', 1.0)) / 100.0
+
+    bdc    = ql.ModifiedFollowing
+    dc_ref = ql.Actual360()
+
+    schedule = _build_schedule(bond_data, evaluation_date, maturity_date, calendar, bdc)
+
+    freq_label       = bond_data.get('coupon_frequency', 'Quarterly')
+    periods_per_year = {'Monthly': 12, 'Quarterly': 4, 'Semiannual': 2}.get(freq_label, 4)
+    amort_per_period = loan_balance * annual_amort / periods_per_year
+
+    L    = loan_balance
+    rows = []
+
+    for i in range(1, len(schedule)):
+        d0 = schedule[i - 1]
+        d1 = schedule[i]
+        if d1 <= evaluation_date:
+            continue
+        if L <= 1e-6:
+            break
+
+        accrual      = dc_ref.yearFraction(d0, d1)
+        fwd          = _forward_rate(curve, d0, d1, dc_ref)
+        floored_rate = max(fwd, floor_rate)
+        interest     = L * (floored_rate + spread) * accrual
+
+        is_last   = (i == len(schedule) - 1)
+        principal = L if is_last else min(amort_per_period, L)
+
+        rows.append({
+            'date_start':           d0.ISO(),
+            'date_end':             d1.ISO(),
+            'date':                 d1,
+            'accrual':              accrual,
+            'fwd_rate':             fwd,
+            'floored_rate':         floored_rate,
+            'tranche_balance_open': L,
+            'tranche_interest':     interest,
+            'tranche_principal':    principal,
+            'tranche_loss':         0.0,
+            'tranche_cf':           interest + principal,
+            'oc_ratio':             None,
+            'oc_pass':              True,
+            'in_reinvestment':      False,
+        })
+
+        L = max(0.0, L - principal)
+
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Core pricer
 # ---------------------------------------------------------------------------
 
@@ -328,7 +417,14 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
     settlement_days = int(bond_data.get('settlement_days', 2))
     settlement_date = calendar.advance(evaluation_date, settlement_days, ql.Days)
 
-    rows = _simulate(bond_data, curve, evaluation_date, settlement_date, calendar)
+    instrument_type = str(bond_data.get('instrument_type', 'clo_tranche')).lower()
+
+    if instrument_type == 'leveraged_loan':
+        rows = _price_leveraged_loan(bond_data, curve, evaluation_date, calendar)
+        face = float(bond_data['loan_balance'])
+    else:
+        rows = _simulate(bond_data, curve, evaluation_date, settlement_date, calendar)
+        face = float(bond_data['tranche_balance'])
 
     npv                      = 0.0
     total_principal          = 0.0
@@ -350,44 +446,45 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
         if not row['oc_pass']:
             oc_failures += 1
 
-        cashflows.append({
-            'date_start':         row['date_start'],
-            'date':               row['date_end'],
-            'fwd_rate':           row['fwd_rate'],
-            'tranche_balance':    row['tranche_balance_open'],
-            'interest':           row['tranche_interest'],
-            'principal':          row['tranche_principal'],
-            'loss':               row['tranche_loss'],
-            'cf':                 row['tranche_cf'],
-            'oc_ratio':           row['oc_ratio'],
-            'oc_pass':            row['oc_pass'],
-            'in_reinvestment':    row['in_reinvestment'],
-            'df':                 df,
-            'pv':                 pv,
-        })
+        cf_entry = {
+            'date_start':      row['date_start'],
+            'date':            row['date_end'],
+            'fwd_rate':        row['fwd_rate'],
+            'tranche_balance': row['tranche_balance_open'],
+            'interest':        row['tranche_interest'],
+            'principal':       row['tranche_principal'],
+            'loss':            row['tranche_loss'],
+            'cf':              row['tranche_cf'],
+            'oc_ratio':        row['oc_ratio'],
+            'oc_pass':         row['oc_pass'],
+            'in_reinvestment': row['in_reinvestment'],
+            'df':              df,
+            'pv':              pv,
+        }
+        if instrument_type == 'leveraged_loan':
+            cf_entry['floored_rate'] = row['floored_rate']
+        cashflows.append(cf_entry)
 
-    wal             = total_weighted_principal / total_principal if total_principal > 1e-8 else 0.0
-    tranche_balance = float(bond_data['tranche_balance'])
-    price_pct       = npv / tranche_balance * 100.0 if tranche_balance > 0 else 0.0
+    wal       = total_weighted_principal / total_principal if total_principal > 1e-8 else 0.0
+    price_pct = npv / face * 100.0 if face > 0 else 0.0
 
-    return {
-        'selected_npv':          npv,
-        'npv':                   npv,
-        'npv_to_maturity':       npv,
-        'npv_to_worst_call':     npv,
-        'npv_to_first_call':     npv,
-        'dirty_price':           npv,
-        'clean_price':           npv,
-        'accrued':               0.0,
-        'wal':                   wal,
-        'tranche_balance':       tranche_balance,
+    result = {
+        'selected_npv':             npv,
+        'npv':                      npv,
+        'npv_to_maturity':          npv,
+        'npv_to_worst_call':        npv,
+        'npv_to_first_call':        npv,
+        'dirty_price':              npv,
+        'clean_price':              npv,
+        'accrued':                  0.0,
+        'wal':                      wal,
+        'instrument_type':          instrument_type,
         'total_principal_returned': total_principal,
-        'oc_test_failures':      oc_failures,
-        'issuer_spread_bp':      issuer_spread_bp,
-        'evaluation_date':       evaluation_date.ISO(),
-        'settlement_date':       settlement_date.ISO(),
-        'discount_curve_name':   discount_curve_name,
-        'cashflows':             cashflows,
+        'issuer_spread_bp':         issuer_spread_bp,
+        'evaluation_date':          evaluation_date.ISO(),
+        'settlement_date':          settlement_date.ISO(),
+        'discount_curve_name':      discount_curve_name,
+        'cashflows':                cashflows,
         'price_pct': {
             'pv_note':               price_pct,
             'pv_note_to_maturity':   price_pct,
@@ -396,12 +493,63 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
         },
     }
 
+    if instrument_type == 'leveraged_loan':
+        result['loan_balance'] = face
+        result['dm_bp']        = issuer_spread_bp
+    else:
+        result['tranche_balance']  = face
+        result['oc_test_failures'] = oc_failures
+
+    return result
+
 
 # ---------------------------------------------------------------------------
 # CLI output
 # ---------------------------------------------------------------------------
 
 def print_result(bond_data, result):
+    if result.get('instrument_type') == 'leveraged_loan':
+        _print_loan(bond_data, result)
+    else:
+        _print_clo(bond_data, result)
+
+
+def _print_loan(bond_data, result):
+    par   = float(bond_data.get('loan_balance', 100.0))
+    sprd  = normalize_rate(bond_data['spread'])
+    floor = normalize_rate(bond_data.get('floor_rate', 0.0))
+    print(f"{bond_data.get('description', bond_data.get('instrument_id'))} "
+          f"({bond_data.get('instrument_id')})")
+    print(f"Model:                 Leveraged loan (floating-rate, amortising)")
+    print(f"Evaluation date:       {result['evaluation_date']}")
+    print(f"Settlement date:       {result['settlement_date']}")
+    print(f"Maturity:              {bond_data.get('maturity_date')}")
+    print(f"Discount curve:        {result.get('discount_curve_name', '-')}")
+    print()
+    print(f"Loan balance:          {par:,.2f}")
+    print(f"Spread:                S+{sprd * 10_000:.0f} bp  ({sprd * 100:.2f}%)")
+    if floor > 0:
+        print(f"Floor:                 {floor * 100:.3f}%")
+    print(f"Annual amortisation:   {bond_data.get('annual_amortisation_pct', 1.0):.2f}%")
+    print(f"DM (z-spread):         {result['issuer_spread_bp']:.2f} bp")
+    print()
+    print(f"NPV:                   {result['npv']:,.6f}  ({result['npv'] / par * 100:.4f}%)")
+    print(f"WAL:                   {result['wal']:.4f} years")
+    print()
+    print('Period detail:')
+    for cf in result['cashflows']:
+        floored = cf.get('floored_rate', cf['fwd_rate'])
+        flag    = '*' if floored > cf['fwd_rate'] else ' '
+        print(f"  {cf['date']}  fwd={cf['fwd_rate'] * 100:.3f}%{flag}"
+              f"  bal={cf['tranche_balance']:,.2f}"
+              f"  int={cf['interest']:,.2f}  prin={cf['principal']:,.2f}"
+              f"  pv={cf['pv']:,.4f}")
+    if any(cf.get('floored_rate', cf['fwd_rate']) > cf['fwd_rate'] for cf in result['cashflows']):
+        print('  * floor active')
+    print()
+
+
+def _print_clo(bond_data, result):
     par = float(bond_data.get('tranche_balance', 100.0))
     print(f"{bond_data.get('description', bond_data.get('instrument_id'))} "
           f"({bond_data.get('instrument_id')})")
@@ -427,7 +575,7 @@ def print_result(bond_data, result):
     print(f"NPV:                   {result['npv']:,.6f}  ({result['npv'] / par * 100:.4f}%)")
     print(f"WAL:                   {result['wal']:.4f} years")
     print(f"Principal returned:    {result['total_principal_returned']:,.2f}")
-    if result['oc_test_failures']:
+    if result.get('oc_test_failures'):
         print(f"OC test failures:      {result['oc_test_failures']} period(s)")
     print()
     print('Period detail:')

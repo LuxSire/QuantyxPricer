@@ -1,15 +1,17 @@
-"""Inflation-linked structured channel note pricer (Spire framework).
+"""Inflation-linked structured channel note pricer.
 
-Prices structured notes where both coupons and redemption are linked to an inflation
-index ratio, built on the Spire collateral + swap framework.  The index ratio is
-projected forward from a known level using a flat annual inflation assumption.
+Prices structured notes where both coupons and redemption are scaled by a
+forward-projected inflation index ratio.  The common QuantLib utilities
+(curve building, schedule generation, z-spread discounting, inflation
+projection) are imported from models/helper.py, which is also the
+dependency used by spire.py.  Neither module depends on the other.
 
 For plain-vanilla government linkers (TIPS, UK Gilts, OATi, BTP-i) use
 inflation_linked.py instead.
 
 Index ratio projection
 ----------------------
-  IndexRatio(d) = index_ratio_at_eval × (1 + annual_index_growth_rate) ^ year_fraction(eval, d)
+  IndexRatio(d) = index_ratio_at_eval × (1 + annual_index_growth_rate) ^ yearFraction(eval, d)
 
 Required JSON fields
 --------------------
@@ -21,7 +23,7 @@ Required JSON fields
   accrual_day_count        Day count convention
   calendar                 TARGET | UnitedStates
   business_day_convention  ModifiedFollowing | Following | Unadjusted
-  collateral               Collateral bond object — see spire.py for full structure
+  collateral               Collateral bond object (same schema as spire.py)
 
   index_linked_assumption  Object with:
     index_ratio_at_eval          Current index ratio at evaluation date
@@ -31,7 +33,6 @@ Required JSON fields
 Optional JSON fields
 --------------------
   index_linked_terms         Object declaring contractual term fields
-                             (used only for completeness validation, not pricing)
   missing_contractual_terms  List of terms acknowledged as contractually missing
   credit_spread_bp           Issuer spread on the note (default 0)
   collateral_spread_bp       Additional spread on the collateral leg (default 0)
@@ -40,15 +41,26 @@ Optional JSON fields
 """
 
 import argparse
+import math
 from pathlib import Path
 
 import QuantLib as ql
-import math
 
-try:
-    from models import spire
-except ModuleNotFoundError:
-    import spire
+from .helper import (
+    parse_date,
+    get_day_count,
+    load_json,
+    build_discount_curve,
+    build_note_dates,
+    discount_factor_with_issuer_spread,
+    inflation_factor,
+    select_note_curve,
+    select_collateral_curve,
+    model_collateral_pv,
+    compute_valuation_adjustments,
+    ASSETS_DIR,
+    CURVES_DIR,
+)
 
 try:
     from reporting import pdf_report
@@ -56,11 +68,8 @@ except ModuleNotFoundError:
     import reporting.pdf_report as pdf_report
 
 
-BASE_DIR = Path(__file__).resolve().parent
-ASSETS_DIR = spire.ASSETS_DIR
-CURVES_DIR = spire.CURVES_DIR
 CURVE_FILE = CURVES_DIR / 'swap_curves.json'
-BOND_FILE = ASSETS_DIR / 'XS0316010023.json'
+BOND_FILE  = ASSETS_DIR / 'XS0316010023.json'
 
 REQUIRED_CONTRACT_FIELDS = [
     'underlying_name',
@@ -77,30 +86,22 @@ REQUIRED_CONTRACT_FIELDS = [
 
 
 def assess_contract_completeness(note_data):
-    terms = dict(note_data.get('index_linked_terms', {}))
+    terms   = dict(note_data.get('index_linked_terms', {}))
     missing = []
     for field in REQUIRED_CONTRACT_FIELDS:
         value = terms.get(field)
         if value is None:
             missing.append(field)
-            continue
-        if isinstance(value, str) and not value.strip():
+        elif isinstance(value, str) and not value.strip():
             missing.append(field)
-            continue
-        if isinstance(value, list) and not value:
+        elif isinstance(value, list) and not value:
             missing.append(field)
-            continue
 
-    declared_missing = note_data.get('missing_contractual_terms', [])
-    for field in declared_missing:
+    for field in note_data.get('missing_contractual_terms', []):
         if field not in missing:
             missing.append(field)
 
-    return {
-        'is_complete': not missing,
-        'missing_fields': missing,
-        'terms': terms,
-    }
+    return {'is_complete': not missing, 'missing_fields': missing, 'terms': terms}
 
 
 def get_index_assumption(note_data):
@@ -108,154 +109,128 @@ def get_index_assumption(note_data):
     if not assumption:
         assumption = dict(note_data.get('collateral', {}).get('inflation_assumption', {}))
     return {
-        'index_ratio_at_eval': float(assumption.get('index_ratio_at_eval', 1.0)),
+        'index_ratio_at_eval':  float(assumption.get('index_ratio_at_eval', 1.0)),
         'annual_inflation_rate': float(
-            assumption.get('annual_index_growth_rate', assumption.get('annual_inflation_rate', 0.0))
+            assumption.get('annual_index_growth_rate',
+            assumption.get('annual_inflation_rate', 0.0))
         ),
-        'coupon_multiplier': float(assumption.get('coupon_multiplier', note_data.get('fixed_coupon_rate', 0.0))),
+        'coupon_multiplier': float(
+            assumption.get('coupon_multiplier', note_data.get('fixed_coupon_rate', 0.0))
+        ),
     }
 
 
+def _solve_ytm(cashflows, evaluation_date, current_pv):
+    if current_pv <= 0 or not cashflows:
+        return 0.0
+    day_count = ql.Actual365Fixed()
+
+    def pv_at(ytm):
+        total = 0.0
+        for cf in cashflows:
+            iso  = cf['date']
+            y, m, d = map(int, iso.split('-'))
+            t    = day_count.yearFraction(evaluation_date, ql.Date(d, m, y))
+            if t > 0:
+                total += cf['amount'] * math.exp(-ytm * t)
+        return total
+
+    ytm = 0.03
+    for _ in range(100):
+        npv = pv_at(ytm) - current_pv
+        if abs(npv) < 1e-6:
+            break
+        eps  = 1e-8
+        deriv = (pv_at(ytm + eps) - npv - current_pv + current_pv) / eps
+        # simplified: derivative of pv_at
+        deriv = (pv_at(ytm + eps) - pv_at(ytm)) / eps
+        if abs(deriv) < 1e-10:
+            break
+        ytm -= npv / deriv
+        ytm  = max(-0.5, min(1.0, ytm))
+    return ytm
+
+
 def price_note(note_data, curve, curve_day_count):
-    eval_date = ql.Settings.instance().evaluationDate
-    note_day_count = spire.get_day_count(note_data.get('accrual_day_count', 'Actual365Fixed'))
+    """Price the index-linked note leg (coupons + redemption)."""
+    eval_date       = ql.Settings.instance().evaluationDate
+    note_day_count  = get_day_count(note_data.get('accrual_day_count', 'Actual365Fixed'))
     coupon_structure = note_data.get('coupon_structure', 'index_linked')
     if coupon_structure != 'index_linked':
         raise ValueError(
-            'index_linked pricer supports coupon_structure="index_linked" only. '
-            f'Received coupon_structure="{coupon_structure}" for {note_data.get("instrument_id", "unknown")}. '
+            f'index_linked pricer requires coupon_structure="index_linked", '
+            f'got "{coupon_structure}" for {note_data.get("instrument_id", "unknown")}.'
         )
 
-    notional = float(note_data.get('note_notional', 100000000.0))
-    collateral_spread_bp = float(
-        note_data.get('collateral_spread_bp')
-        or note_data.get('collateral_spread')
-        or 0.0
+    notional       = float(note_data.get('note_notional', 100_000_000.0))
+    spread_bp      = float(note_data.get('credit_spread_bp', 0.0)) + float(
+        note_data.get('collateral_spread_bp') or note_data.get('collateral_spread') or 0.0
     )
-    issuer_spread_bp = float(note_data.get('credit_spread_bp', 0.0)) + collateral_spread_bp
-    index_assumption = get_index_assumption(note_data)
-    dates = spire.build_note_dates(note_data)
+    index_assump   = get_index_assumption(note_data)
+    dates          = build_note_dates(note_data)
 
-    pv_coupons = 0.0
+    pv_coupons    = 0.0
     pv_redemption = 0.0
-    cashflows = []
+    cashflows     = []
 
     for i in range(1, len(dates)):
         d0 = dates[i - 1]
         d1 = dates[i]
         if d1 <= eval_date:
             continue
-
-        accrual = note_day_count.yearFraction(d0, d1)
-        index_ratio = spire.inflation_factor(eval_date, d1, index_assumption)
-        coupon_cf = notional * index_assumption['coupon_multiplier'] * accrual * index_ratio
-        df = spire.discount_factor_with_issuer_spread(curve, curve_day_count, eval_date, d1, issuer_spread_bp)
-        pv = coupon_cf * df
+        accrual    = note_day_count.yearFraction(d0, d1)
+        idx_ratio  = inflation_factor(eval_date, d1, index_assump)
+        coupon_cf  = notional * index_assump['coupon_multiplier'] * accrual * idx_ratio
+        df         = discount_factor_with_issuer_spread(curve, curve_day_count, eval_date, d1, spread_bp)
+        pv         = coupon_cf * df
         pv_coupons += pv
         cashflows.append({'date': d1.ISO(), 'type': 'coupon', 'amount': coupon_cf, 'df': df, 'pv': pv})
 
     maturity_date = dates[-1]
     if maturity_date > eval_date:
-        index_ratio_mat = spire.inflation_factor(eval_date, maturity_date, index_assumption)
-        redemption_cf = notional * index_ratio_mat
-        df_maturity = spire.discount_factor_with_issuer_spread(
-            curve,
-            curve_day_count,
-            eval_date,
-            maturity_date,
-            issuer_spread_bp,
-        )
-        pv_redemption = redemption_cf * df_maturity
-        cashflows.append(
-            {
-                'date': maturity_date.ISO(),
-                'type': 'redemption',
-                'amount': redemption_cf,
-                'df': df_maturity,
-                'pv': pv_redemption,
-            }
-        )
+        idx_ratio_mat = inflation_factor(eval_date, maturity_date, index_assump)
+        redemption_cf = notional * idx_ratio_mat
+        df_mat        = discount_factor_with_issuer_spread(curve, curve_day_count, eval_date, maturity_date, spread_bp)
+        pv_redemption = redemption_cf * df_mat
+        cashflows.append({'date': maturity_date.ISO(), 'type': 'redemption',
+                          'amount': redemption_cf, 'df': df_mat, 'pv': pv_redemption})
 
     return {
-        'pv_note': pv_coupons + pv_redemption,
-        'pv_note_coupons': pv_coupons,
+        'pv_note':           pv_coupons + pv_redemption,
+        'pv_note_coupons':   pv_coupons,
         'pv_note_redemption': pv_redemption,
-        'cashflows': cashflows,
-        'index_assumption': index_assumption,
+        'cashflows':         cashflows,
+        'index_assumption':  index_assump,
     }
 
 
 def price_asset(note_data, curve_json):
-    def calculate_yield_to_maturity(cashflows, evaluation_date, current_pv):
-        """
-        Calculate yield-to-maturity (YTM) by solving for y in:
-        PV = sum(CF_i * exp(-y * t_i))
-        Uses Newton-Raphson iteration.
-        """
-        if current_pv <= 0 or not cashflows:
-            return 0.0
-    
-        day_count = ql.Actual365Fixed()
-    
-        def pv_at_yield(ytm):
-            pv = 0.0
-            for cf in cashflows:
-                # Parse ISO format date (YYYY-MM-DD)
-                iso_date = cf['date']
-                year, month, day = map(int, iso_date.split('-'))
-                cf_date = ql.Date(day, month, year)
-                t = day_count.yearFraction(evaluation_date, cf_date)
-                if t > 0:
-                    pv += cf['amount'] * math.exp(-ytm * t)
-            return pv
-    
-        def npv_objective(ytm):
-            return pv_at_yield(ytm) - current_pv
-    
-        # Newton-Raphson: search for ytm where npv_objective = 0
-        ytm_guess = 0.03  # Initial guess: 3%
-        for _ in range(100):
-            npv = npv_objective(ytm_guess)
-            if abs(npv) < 1e-6:
-                break
-            # Numerical derivative
-            epsilon = 1e-8
-            npv_plus = npv_objective(ytm_guess + epsilon)
-            derivative = (npv_plus - npv) / epsilon
-            if abs(derivative) < 1e-10:
-                break
-            ytm_guess = ytm_guess - npv / derivative
-            if ytm_guess < -0.5:
-                ytm_guess = -0.5  # Clamp to reasonable bounds
-            if ytm_guess > 1.0:
-                ytm_guess = 1.0
-    
-        return max(-0.5, min(1.0, ytm_guess))
+    evaluation_date = parse_date(note_data['evaluation_date'])
 
+    note_curve_cfg,       note_curve_name       = select_note_curve(note_data, curve_json)
+    collateral_curve_cfg, collateral_curve_name = select_collateral_curve(note_data, curve_json)
+    note_curve,       note_curve_day_count       = build_discount_curve(note_curve_cfg,       evaluation_date)
+    collateral_curve, collateral_curve_day_count = build_discount_curve(collateral_curve_cfg, evaluation_date)
 
-    evaluation_date = spire.parse_date(note_data['evaluation_date'])
-    note_curve_cfg, note_curve_name = spire.select_note_curve(note_data, curve_json)
-    collateral_curve_cfg, collateral_curve_name = spire.select_collateral_curve(note_data, curve_json)
-    note_curve, note_curve_day_count = spire.build_discount_curve(note_curve_cfg, evaluation_date)
-    collateral_curve, collateral_curve_day_count = spire.build_discount_curve(collateral_curve_cfg, evaluation_date)
-    note_notional = float(note_data.get('note_notional', 100000000.0))
-    issue_price = float(note_data.get('issue_price', 100.0))
+    note_notional = float(note_data.get('note_notional', 100_000_000.0))
+    issue_price   = float(note_data.get('issue_price', 100.0))
 
     note_leg = price_note(note_data, note_curve, note_curve_day_count)
+
     if note_data.get('collateral'):
-        collateral_leg = spire.model_collateral_pv(note_data['collateral'], collateral_curve, collateral_curve_day_count)
+        collateral_leg = model_collateral_pv(
+            note_data['collateral'], collateral_curve, collateral_curve_day_count
+        )
     else:
         collateral_leg = {
-            'pv_collateral': 0.0,
-            'pv_collateral_model': 0.0,
-            'valuation_method': None,
-            'cashflows': [],
+            'pv_collateral': 0.0, 'pv_collateral_model': 0.0,
+            'valuation_method': None, 'cashflows': [],
         }
-    adjustments = spire.compute_valuation_adjustments(note_data, note_curve, note_curve_day_count)
+
+    adjustments          = compute_valuation_adjustments(note_data, note_curve, note_curve_day_count)
     contract_completeness = assess_contract_completeness(note_data)
 
-    swap_cfg = note_data.get('swap', {})
-    swap_mode = swap_cfg.get('mode', 'calibration_residual')
+    swap_mode = note_data.get('swap', {}).get('mode', 'calibration_residual')
     if swap_mode == 'calibration_residual':
         pv_swap = note_leg['pv_note'] - collateral_leg['pv_collateral'] + adjustments['pv_total_adjustments']
     else:
@@ -263,60 +238,57 @@ def price_asset(note_data, curve_json):
 
     lhs = note_leg['pv_note']
     rhs = collateral_leg['pv_collateral'] + pv_swap - adjustments['pv_total_adjustments']
-    scale_to_pct = 100.0 / note_notional
-    lhs_pct = lhs * scale_to_pct
-    
-    # Calculate YTM
-    ytm = calculate_yield_to_maturity(note_leg['cashflows'], evaluation_date, lhs)
+    s   = 100.0 / note_notional
+    ytm = _solve_ytm(note_leg['cashflows'], evaluation_date, lhs)
 
     return {
-        'evaluation_date': evaluation_date.ISO(),
-        'note_discount_curve_name': note_curve_name,
+        'evaluation_date':              evaluation_date.ISO(),
+        'note_discount_curve_name':     note_curve_name,
         'collateral_discount_curve_name': collateral_curve_name,
-        'issue_price': issue_price,
-        'note_notional': note_notional,
-        'pv_note': lhs_pct,
-        'selected_npv': lhs_pct,
-        'npv_to_maturity': lhs_pct,
-        'npv_to_first_call': lhs_pct,
-        'npv_to_worst_call': lhs_pct,
-        'pv_collateral': collateral_leg['pv_collateral'],
-        'pv_collateral_model': collateral_leg['pv_collateral_model'],
-        'collateral_valuation_method': collateral_leg['valuation_method'],
-        'pv_swap': pv_swap,
-        'pv_adjustments': adjustments,
-        'identity_lhs_pv_note': lhs,
-        'identity_rhs_reconstructed': rhs,
-        'identity_error': lhs - rhs,
-        'contract_completeness': contract_completeness,
-            'yield_to_maturity': ytm,
+        'issue_price':                  issue_price,
+        'note_notional':                note_notional,
+        'pv_note':                      lhs * s,
+        'selected_npv':                 lhs * s,
+        'npv_to_maturity':              lhs * s,
+        'npv_to_first_call':            lhs * s,
+        'npv_to_worst_call':            lhs * s,
+        'pv_collateral':                collateral_leg['pv_collateral'],
+        'pv_collateral_model':          collateral_leg['pv_collateral_model'],
+        'collateral_valuation_method':  collateral_leg['valuation_method'],
+        'pv_swap':                      pv_swap,
+        'pv_adjustments':               adjustments,
+        'identity_lhs_pv_note':         lhs,
+        'identity_rhs_reconstructed':   rhs,
+        'identity_error':               lhs - rhs,
+        'contract_completeness':        contract_completeness,
+        'yield_to_maturity':            ytm,
         'price_pct': {
-            'pv_note': lhs * scale_to_pct,
-                        'pv_note_coupons': note_leg['pv_note_coupons'] * scale_to_pct,
-                        'pv_note_redemption': note_leg['pv_note_redemption'] * scale_to_pct,
-            'pv_collateral': collateral_leg['pv_collateral'] * scale_to_pct,
-            'pv_collateral_model': collateral_leg['pv_collateral_model'] * scale_to_pct,
-            'pv_swap': pv_swap * scale_to_pct,
-            'pv_fees': adjustments['pv_fees'] * scale_to_pct,
-            'pv_funding': adjustments['pv_funding'] * scale_to_pct,
-            'pv_csa': adjustments['pv_csa'] * scale_to_pct,
-            'pv_residual_basis': adjustments['pv_residual_basis'] * scale_to_pct,
-            'pv_total_adjustments': adjustments['pv_total_adjustments'] * scale_to_pct,
-            'identity_lhs_pv_note': lhs * scale_to_pct,
-            'identity_rhs_reconstructed': rhs * scale_to_pct,
-            'identity_error': (lhs - rhs) * scale_to_pct,
+            'pv_note':                   lhs * s,
+            'pv_note_coupons':           note_leg['pv_note_coupons']   * s,
+            'pv_note_redemption':        note_leg['pv_note_redemption'] * s,
+            'pv_collateral':             collateral_leg['pv_collateral']       * s,
+            'pv_collateral_model':       collateral_leg['pv_collateral_model'] * s,
+            'pv_swap':                   pv_swap                               * s,
+            'pv_fees':                   adjustments['pv_fees']                * s,
+            'pv_funding':                adjustments['pv_funding']             * s,
+            'pv_csa':                    adjustments['pv_csa']                 * s,
+            'pv_residual_basis':         adjustments['pv_residual_basis']      * s,
+            'pv_total_adjustments':      adjustments['pv_total_adjustments']   * s,
+            'identity_lhs_pv_note':      lhs * s,
+            'identity_rhs_reconstructed': rhs * s,
+            'identity_error':            (lhs - rhs) * s,
         },
-        'note_leg': note_leg,
+        'note_leg':      note_leg,
         'collateral_leg': collateral_leg,
-        'swap_mode': swap_mode,
+        'swap_mode':     swap_mode,
     }
 
 
 def print_report(note_data, result):
-    pct = result['price_pct']
+    pct        = result['price_pct']
     assumption = result['note_leg']['index_assumption']
     completeness = result['contract_completeness']
-    print(f"{note_data['description']} ({note_data['instrument_id']})")
+    print(f"{note_data.get('description', '')} ({note_data['instrument_id']})")
     print(f"Evaluation date: {result['evaluation_date']}")
     print(f"Note discount curve: {result['note_discount_curve_name']}")
     print(f"Collateral discount curve: {result['collateral_discount_curve_name']}")
@@ -345,18 +317,22 @@ def print_report(note_data, result):
     print(f"Identity error %: {pct['identity_error']:.8f}")
 
 
+# Keep public alias so pricer.py can call index_linked.print_result
+print_result = print_report
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Price index-linked channel notes.')
-    parser.add_argument('--bond-file', default=str(BOND_FILE), help='Path to index-linked bond JSON')
-    parser.add_argument('--curve-file', default=str(CURVE_FILE), help='Path to swap curve JSON (single curve or catalog)')
+    parser.add_argument('--bond-file',  default=str(BOND_FILE),  help='Path to bond JSON')
+    parser.add_argument('--curve-file', default=str(CURVE_FILE), help='Path to swap curve JSON')
     return parser.parse_args()
 
 
 if __name__ == '__main__':
-    args = parse_args()
-    note_data = spire.load_json(Path(args.bond_file))
-    curve_json = spire.load_json(Path(args.curve_file))
-    result = price_asset(note_data, curve_json)
+    args       = parse_args()
+    note_data  = load_json(Path(args.bond_file))
+    curve_json = load_json(Path(args.curve_file))
+    result     = price_asset(note_data, curve_json)
     print_report(note_data, result)
     pdf_path = pdf_report.create_pdf_report(
         model_name='index_linked',

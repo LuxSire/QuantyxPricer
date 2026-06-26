@@ -20,6 +20,7 @@ from typing import Any
 import subprocess, sys
 import threading
 import uuid
+import tempfile
 from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
 from classes import  Prices, Asset, Assets,TS_Dict
 from models import helper
@@ -114,18 +115,28 @@ async def initialize_data():
 
     try:
         for asset in assets.values():
-            asset.prices=prices.get(asset.instrument_id)  # Attach prices if available
+            asset.prices = prices.get(asset.instrument_id)
+
+            def _register_underlying(ul, parent_id):
+                key = ul.instrument_id
+                if not key:
+                    return
+                ts = timeseries.get(key)
+                ul.ts = ts
+                underlying_assets[key] = ul
+                _vol = ts.volatility() if ts is not None else 'N/A'
+                print(f"[API] initialize_data: underlying_asset={key} parent={parent_id} prices_set={ts is not None} volatility={_vol}")
+
             if hasattr(asset, 'underlying') and asset.underlying is not None:
-                # asset.underlying is already an Asset instance created by Asset.from_dict()
                 key = asset.underlying.instrument_id
-                asset.underlying_ts = timeseries.get(key)  # Attach underlying's prices (was incorrectly using asset.instrument_id)
+                asset.underlying_ts = timeseries.get(key)
                 print(f"[API] initialize_data: asset={asset.instrument_id} underlying_prices_in_db={timeseries.get(key) is not None}")
-                if key:
-                    underlying_assets[key] = asset.underlying
-                    underlying_assets[key].ts = asset.underlying_ts  # Attach prices if available
-                    _ts = underlying_assets[key].ts
-                    _vol = _ts.volatility() if _ts is not None else 'N/A'
-                    print(f"[API] initialize_data: underlying_asset={key} prices_set={_ts is not None} volatility={_vol}")
+                _register_underlying(asset.underlying, asset.instrument_id)
+
+            ul_list = getattr(asset, 'underlyings', None) or []
+            for ul in ul_list:
+                _register_underlying(ul, asset.instrument_id)
+
             print(f"[API] Extracted {len(underlying_assets)} underlying assets")
     except Exception as e:
         print(f"[API] Warning: could not extract underlying assets: {e}")
@@ -192,42 +203,16 @@ async def root():
 
 
 
-@app.post('/assets', tags=['Assets'], summary='Upload an asset JSON file')
-async def save_asset(request: Request, payload: dict = None):
-    """Save a bond JSON into the assets/ folder.
-
-    Body must be the bond JSON itself (object) and include `instrument_id` or `isin`.
-    Returns the saved filename.
-    """
-    # Log incoming request for debugging
-    try:
-        raw_body = await request.body()
-        print('\n[API] /assets received request headers:')
-        for k, v in request.headers.items():
-            print(f'  {k}: {v}')
-        print(f'[API] Raw body length: {len(raw_body)}')
-    except Exception as e:
-        print(f'[API] Could not read raw request body: {e}')
-
-    if payload is None:
-        # Attempt to parse JSON from raw body for more helpful error messages
-        try:
-            payload = json.loads(raw_body.decode('utf-8')) if raw_body else None
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f'Invalid JSON body: {e}')
-
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail='JSON object required in request body')
+async def _save_asset_data(payload: dict) -> dict:
+    """Normalize dates, write asset JSON to ASSETS_DIR, and insert into MySQL."""
     asset = payload
 
-    # Normalize common date fields into ISO YYYY-MM-DD
     def try_parse_date(val: Any):
         if not isinstance(val, str):
             return None
         s = val.strip()
         if not s:
             return None
-        # Fast reject values that look like already ISO
         if len(s) >= 10 and s[4] == '-' and s[7] == '-':
             return s[:10]
         try:
@@ -247,6 +232,7 @@ async def save_asset(request: Request, payload: dict = None):
                 asset[k] = parsed
             else:
                 print(f"[API] Could not parse date field {k}: {asset.get(k)}")
+
     instrument_id = asset.get('instrument_id') or asset.get('isin')
     if not instrument_id:
         raise HTTPException(status_code=400, detail='asset JSON must include instrument_id or isin')
@@ -258,16 +244,43 @@ async def save_asset(request: Request, payload: dict = None):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     print(f"[API] Saved asset to {path} (size={path.stat().st_size} bytes)")
-    
-    # Also save to MySQL database
+
     try:
         row_id = db.insert_asset(asset)
         print(f"[API] Inserted asset into MySQL with id={row_id}")
     except Exception as e:
         print(f"[API] Warning: could not insert asset into MySQL: {e}")
-        # Do not fail the upload if DB insert fails; file is already saved
-    
+
     return {"saved": filename, "path": str(path)}
+
+
+@app.post('/assets', tags=['Assets'], summary='Upload an asset JSON file')
+async def save_asset(request: Request, payload: dict = None):
+    """Save a bond JSON into the assets/ folder.
+
+    Body must be the bond JSON itself (object) and include `instrument_id` or `isin`.
+    Returns the saved filename.
+    """
+    try:
+        raw_body = await request.body()
+        print('\n[API] /assets received request headers:')
+        for k, v in request.headers.items():
+            print(f'  {k}: {v}')
+        print(f'[API] Raw body length: {len(raw_body)}')
+    except Exception as e:
+        print(f'[API] Could not read raw request body: {e}')
+        raw_body = None
+
+    if payload is None:
+        try:
+            payload = json.loads(raw_body.decode('utf-8')) if raw_body else None
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f'Invalid JSON body: {e}')
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail='JSON object required in request body')
+
+    return await _save_asset_data(payload)
 
 
 @app.post('/update_asset', tags=['Assets'], summary='Replace an existing asset JSON by uploaded filename')
@@ -381,40 +394,26 @@ async def termsheet_asset(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f'Could not load termsheet converter: {e}')
 
-    try:
-        # Let the converter derive output filename from detected ISIN (or PDF stem).
-        ts2j.process_file(temp_pdf, ASSETS_DIR)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f'Termsheet conversion failed: {e}')
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        try:
+            ts2j.process_file(temp_pdf, tmp_path)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f'Termsheet conversion failed: {e}')
 
-    # Try to discover generated JSON name from parsed ISIN, with fallback to PDF stem.
-    try:
-        text = ts2j.extract_text_from_pdf(temp_pdf)
-        guessed = ts2j.heuristic_field_from_text(text)
-        instrument_id = guessed.get('instrument_id') or temp_pdf.stem.split('_', 1)[-1]
-    except Exception:
-        instrument_id = temp_pdf.stem.split('_', 1)[-1]
-
-    out_file = f"{instrument_id}.json"
-    out_path = ASSETS_DIR / out_file
-    if not out_path.exists():
-        # fallback: converter may have used source stem
-        fallback = ASSETS_DIR / f"{Path(filename).stem}.json"
-        if fallback.exists():
-            out_path = fallback
-            out_file = fallback.name
-        else:
+        json_files = list(tmp_path.glob('*.json'))
+        if not json_files:
             raise HTTPException(status_code=500, detail='Conversion finished but output JSON was not found')
 
-    try:
-        with open(out_path, 'r', encoding='utf-8') as f:
-            payload = json.load(f)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f'Could not read generated JSON: {e}')
+        try:
+            with open(json_files[0], 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f'Could not read generated JSON: {e}')
 
+    result = await _save_asset_data(payload)
     return {
-        'saved': out_file,
-        'path': str(out_path),
+        **result,
         'instrument_id': payload.get('instrument_id') or payload.get('isin'),
         'asset': payload,
     }
@@ -464,6 +463,32 @@ async def fetch_assets():
     except Exception as e:
         print(f"[API] Error fetching assets from database: {e}")
         raise HTTPException(status_code=500, detail='Could not fetch assets from database')
+
+
+@app.get('/fetch_models', tags=['Assets'], summary='Fetch all model names from MySQL')
+async def fetch_models():
+    try:
+        models = db.select_models()
+        return models
+    except Exception as e:
+        print(f'[API] Error fetching models from database: {e}')
+        raise HTTPException(status_code=500, detail='Could not fetch models from database')
+
+
+class UpdateModelRequest(BaseModel):
+    name: str
+    required_fields: list
+    optional_fields: list
+
+@app.post('/update_model', tags=['Assets'], summary='Update required and optional fields for a model')
+async def update_model(payload: UpdateModelRequest):
+    try:
+        db.update_model(payload.name, payload.required_fields, payload.optional_fields)
+        return {'ok': True, 'name': payload.name}
+    except Exception as e:
+        print(f'[API] Error updating model {payload.name}: {e}')
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get('/fetch_underlying_assets', tags=['Assets'], summary='Fetch all underlying assets')
 async def fetch_underlying_assets():

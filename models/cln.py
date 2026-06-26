@@ -1,3 +1,37 @@
+"""Credit-Linked Note (CLN) pricer.
+
+Prices a CLN as a risky note whose cash flows are weighted by survival probability,
+derived from a piecewise-constant hazard rate term structure calibrated to CDS spreads
+taken from the curve file.
+
+Pricing formula
+---------------
+  NPV = Σ coupon(t) × survival(t) × df(t)
+      + redemption × survival(T) × df(T)
+      + recovery_rate × Σ λ(t) × survival(t) × df(t) × Δt
+
+Required JSON fields
+--------------------
+  instrument_id         ISIN or internal identifier
+  evaluation_date       Pricing date (DD-MM-YYYY or YYYY-MM-DD)
+  issue_date            DD-MM-YYYY or YYYY-MM-DD
+  maturity_date         DD-MM-YYYY or YYYY-MM-DD
+  fixed_coupon_rate     Annual coupon rate on the CLN (decimal or %, auto-normalised)
+  coupon_frequency      Annual | Semiannual | Quarterly | Monthly
+  accrual_day_count     Day count convention
+  par                   Face value (e.g. 100)
+
+  One of the following to select the CDS curve from the curve file:
+    reference_entity              Name of the reference entity
+    reference_obligation_isin     ISIN of the reference obligation
+
+Optional JSON fields
+--------------------
+  recovery_rate              Default recovery rate applied in the hazard model (default 0.40)
+  credit_spread_bp           Issuer Z-spread on top of the risk-free rate (default 0)
+  reference_cds_curve_name   Explicit CDS curve name to override auto-selection
+"""
+
 from pathlib import Path
 import math
 from typing import List, Dict, Any
@@ -228,7 +262,7 @@ def price_asset(bond_data: Dict[str, Any], curve_json):
     return _price_with_curve(curve, bond_data, curve_json=curve_json)
 
 
-def print_cln_result(bond_data, result):
+def print_report(bond_data, result):
     amt_to_pct = lambda v: v * 100.0 / float(bond_data.get('par', 100.0))
     print(f"{bond_data.get('description','CLN')} ({bond_data.get('instrument_id')})")
     print(f"Model: reduced-form CLN")

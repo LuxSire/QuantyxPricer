@@ -1,0 +1,43 @@
+{
+  "model": "hullwhite",
+  "description": "Fixed, floating, fixed-to-float, and CMS bond pricer using the Hull-White interest rate model.",
+  "required_fields": [
+    { "name": "instrument_id",           "type": "string",  "description": "ISIN or internal identifier" },
+    { "name": "description",             "type": "string",  "description": "Human-readable name" },
+    { "name": "evaluation_date",         "type": "string",  "description": "Pricing date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "issue_date",              "type": "string",  "description": "Issue date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "maturity_date",           "type": "string",  "description": "Maturity date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "coupon_frequency",        "type": "string",  "description": "Coupon payment frequency", "enum": ["Annual", "Semiannual", "Quarterly", "Monthly"] },
+    { "name": "accrual_day_count",       "type": "string",  "description": "Day count convention", "enum": ["Actual365Fixed", "Actual360", "ACT/ACT (ICMA)", "30/360"] },
+    { "name": "calendar",                "type": "string",  "description": "Holiday calendar", "enum": ["TARGET", "UnitedStates"] },
+    { "name": "business_day_convention", "type": "string",  "description": "Business day adjustment", "enum": ["ModifiedFollowing", "Following", "Unadjusted"] },
+    { "name": "date_generation",         "type": "string",  "description": "Schedule generation direction", "enum": ["Backward", "Forward"] },
+    { "name": "par",                     "type": "float",   "description": "Face value (e.g. 100)" },
+    { "name": "credit_spread_bp",        "type": "float",   "description": "Z-spread over the discount curve in basis points" },
+    { "name": "coupon_structure",        "type": "string",  "description": "Coupon type", "enum": ["fixed", "floating", "fixed_to_float", "cms_resettable"] },
+    { "name": "fixed_coupon_rate",       "type": "float",   "description": "Annual coupon rate (decimal or %). Required when coupon_structure is 'fixed' or 'fixed_to_float'" },
+    { "name": "float_spread",            "type": "float",   "description": "Spread over the forward rate. Required when coupon_structure is 'floating' or 'fixed_to_float'" },
+    { "name": "fixed_rate_end_date",     "type": "string",  "description": "Switchover date from fixed to floating. Required when coupon_structure is 'fixed_to_float'" }
+  ],
+  "optional_fields": [
+    { "name": "hw_a",                     "type": "float",   "default": 0.03,              "description": "Hull-White mean reversion speed" },
+    { "name": "hw_sigma",                 "type": "float",   "default": 0.01,              "description": "Hull-White short-rate volatility" },
+    { "name": "hw_calibration",           "type": "object",  "default": {"enabled": true}, "description": "Dict with 'enabled' key to toggle swaption calibration" },
+    { "name": "float_reference_day_count","type": "string",  "default": "Actual360",       "description": "Day count for forward rate calculation (floating coupon)" },
+    { "name": "float_floor",              "type": "float",   "default": null,              "description": "Optional floor on the floating coupon rate" },
+    { "name": "cms_tenor_years",          "type": "int",     "default": 10,                "description": "Underlying swap tenor in years (cms_resettable)" },
+    { "name": "cms_coupon_frequency",     "type": "string",  "default": "Annual",          "description": "Fixed-leg frequency of the reference CMS swap" },
+    { "name": "cms_day_count",            "type": "string",  "default": "Actual360",       "description": "Day count for the CMS leg" },
+    { "name": "cms_multiplier",           "type": "float",   "default": 1.0,               "description": "Multiplier on the CMS rate" },
+    { "name": "cms_spread",               "type": "float",   "default": 0.0,               "description": "Additive spread on the CMS rate" },
+    { "name": "cms_floor",                "type": "float",   "default": null,              "description": "Optional floor on the CMS-derived coupon" },
+    { "name": "cms_cap",                  "type": "float",   "default": null,              "description": "Optional cap on the CMS-derived coupon" },
+    { "name": "call_dates",               "type": "list",    "default": [],                "description": "List of callable dates (DD-MM-YYYY) for callable bonds" },
+    { "name": "call_price",               "type": "float",   "default": null,              "description": "Call price as % of par (default = par)" },
+    { "name": "callable_type",            "type": "string",  "default": "bermudan",        "description": "Callability type", "enum": ["bermudan", "american"] },
+    { "name": "valuation_mode",           "type": "string",  "default": "to_maturity",     "description": "Which redemption scenario to select as NPV", "enum": ["to_maturity", "to_call"] },
+    { "name": "redemption",               "type": "float",   "default": null,              "description": "Final redemption amount (default = par)" },
+    { "name": "settlement_days",          "type": "int",     "default": 2,                 "description": "Days to settlement" },
+    { "name": "first_coupon_date",        "type": "string",  "default": null,              "description": "Override for irregular first coupon period (DD-MM-YYYY)" }
+  ]
+}

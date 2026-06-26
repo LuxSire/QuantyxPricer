@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react'
 import logo from '../logo_q.png'
 import Instrument from './Instrument'
 import TimeSeries from './TimeSeries'
+import Settings from './Settings'
 import Sidebar from './Sidebar'
 import { usePrices } from './hooks/usePrices'
 import { useAsset } from './hooks/useAsset'
@@ -50,8 +51,9 @@ export default function App() {
     if (h.startsWith('#/timeseries/')) return h.replace('#/timeseries/', '')
     return null
   })
+  const [settingsOpen, setSettingsOpen] = useState(() => window.location.hash === '#/settings')
   
-  const { rows, error, pricingAll, updatingCurves, pricing_single_asset } = usePrices(apiBase)
+  const { rows, error, pricingAll, updatingCurves, pricing_single_asset, downloadPrice } = usePrices(apiBase)
   const { fetchNopricedAssets, fetchUnderlyingAssets } = useAsset(apiBase)
 
   const createOnPriceAll = async () => {
@@ -96,9 +98,10 @@ export default function App() {
   useEffect(() => {
     function onHash() {
       const h = window.location.hash || ''
-      if (h.startsWith('#/instrument/')) { setRoute(h.replace('#/instrument/', '')); setTsRoute(null) }
-      else if (h.startsWith('#/timeseries/')) { setTsRoute(h.replace('#/timeseries/', '')); setRoute(null) }
-      else { setRoute(null); setTsRoute(null) }
+      if (h.startsWith('#/instrument/')) { setRoute(h.replace('#/instrument/', '')); setTsRoute(null); setSettingsOpen(false) }
+      else if (h.startsWith('#/timeseries/')) { setTsRoute(h.replace('#/timeseries/', '')); setRoute(null); setSettingsOpen(false) }
+      else if (h === '#/settings') { setSettingsOpen(true); setRoute(null); setTsRoute(null) }
+      else { setRoute(null); setTsRoute(null); setSettingsOpen(false) }
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
@@ -142,6 +145,10 @@ export default function App() {
 
   if (error) return <div className="error">Error: {error}</div>
   if (!rows) return <div>Loading data...</div>
+
+  if (settingsOpen) {
+    return <Settings apiBase={apiBase} />
+  }
 
   if (tsRoute) {
     return <TimeSeries instrumentId={tsRoute} apiBase={apiBase} />
@@ -283,14 +290,14 @@ export default function App() {
                 const busy = instrumentId && pricingIds.includes(instrumentId)
                 return (
                   <button
-                    title="pricing"
+                    title="download prices"
                     disabled={busy}
                     onClick={async (e) => {
                       e.preventDefault()
-                      await priceOne(instrumentId)
+                      await downloadPrice(instrumentId, setSnack)
                     }}
                   >
-                    {busy ? '⏳' : '⏱️'}
+                    {busy ? '⏳' : '⬇️'}
                   </button>
                 )
               }}

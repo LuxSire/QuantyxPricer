@@ -1,3 +1,25 @@
+"""Trinomial tree bond pricer using the Hull-White one-factor short-rate model.
+
+Prices callable/putable bonds by building a recombining trinomial lattice calibrated
+to the Hull-White mean-reversion speed and volatility parameters.  Supports the same
+coupon_structure values as hullwhite.py (fixed, floating, fixed_to_float, cms_resettable).
+
+Required JSON fields
+--------------------
+  Same structure as hullwhite.py — see that module for the full field list.
+
+Optional JSON fields
+--------------------
+  hw_a              Hull-White mean reversion speed (default 0.03)
+  hw_sigma          Hull-White short-rate volatility (default 0.01)
+  tree_time_steps   Number of steps in the trinomial lattice (default 120)
+  issuer_spread_bp  Z-spread override; falls back to credit_spread_bp if absent
+  call_dates        List of callable dates (DD-MM-YYYY)
+  call_price        Call price as % of par (default par)
+  callable_type     bermudan | american
+  redemption        Final redemption amount (default par)
+"""
+
 import argparse
 from pathlib import Path
 

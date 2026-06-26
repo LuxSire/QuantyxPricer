@@ -1,0 +1,21 @@
+{
+  "model": "cln",
+  "description": "Credit-Linked Note pricer. Prices a CLN as a risky note whose cash flows are weighted by survival probability derived from a hazard rate term structure calibrated to CDS spreads.",
+  "required_fields": [
+    { "name": "instrument_id",                 "type": "string", "description": "ISIN or internal identifier" },
+    { "name": "evaluation_date",               "type": "string", "description": "Pricing date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "issue_date",                    "type": "string", "description": "Issue date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "maturity_date",                 "type": "string", "description": "Maturity date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "fixed_coupon_rate",             "type": "float",  "description": "Annual coupon rate on the CLN (decimal or %, auto-normalised)" },
+    { "name": "coupon_frequency",              "type": "string", "description": "Coupon payment frequency", "enum": ["Annual", "Semiannual", "Quarterly", "Monthly"] },
+    { "name": "accrual_day_count",             "type": "string", "description": "Day count convention", "enum": ["Actual365Fixed", "Actual360", "ACT/ACT (ICMA)", "30/360"] },
+    { "name": "par",                           "type": "float",  "description": "Face value (e.g. 100)" },
+    { "name": "reference_entity",              "type": "string", "description": "Name of the reference entity — used to select the CDS curve. Provide this or reference_obligation_isin" },
+    { "name": "reference_obligation_isin",     "type": "string", "description": "ISIN of the reference obligation — alternative to reference_entity" }
+  ],
+  "optional_fields": [
+    { "name": "recovery_rate",             "type": "float",  "default": 0.4,  "description": "Default recovery rate applied in the hazard rate model" },
+    { "name": "credit_spread_bp",          "type": "float",  "default": 0.0,  "description": "Issuer Z-spread on top of the risk-free rate (basis points)" },
+    { "name": "reference_cds_curve_name",  "type": "string", "default": null, "description": "Explicit CDS curve name to override auto-selection from the curve file" }
+  ]
+}

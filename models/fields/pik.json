@@ -1,0 +1,85 @@
+{
+  "model": "pik",
+  "description": "PIK (Payment-in-Kind) bond pricer. Covers instruments where interest is paid by accreting into the outstanding principal rather than in cash. Supports full PIK (all interest capitalises, compounding zero-coupon redemption) and PIK toggle (issuer elects each period to pay cash or PIK, with optional PIK step-up rate). Common in leveraged finance, mezzanine debt, and private credit.",
+  "required_fields": [
+    { "name": "instrument_id",    "type": "string", "description": "ISIN or internal identifier" },
+    { "name": "evaluation_date",  "type": "string", "description": "Pricing date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "issue_date",       "type": "string", "description": "Issue / closing date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "maturity_date",    "type": "string", "description": "Maturity date (DD-MM-YYYY or YYYY-MM-DD)" },
+    {
+      "name": "instrument_type",
+      "type": "string",
+      "description": "Payoff structure of the PIK instrument",
+      "enum": ["full_pik", "pik_toggle"]
+    },
+    { "name": "coupon_rate",      "type": "float",  "description": "Base coupon / PIK accrual rate (decimal or %, auto-normalised). For full_pik this is the PIK rate. For pik_toggle this is the cash coupon rate; set pik_rate or pik_rate_step_up if the PIK rate differs." },
+    { "name": "coupon_frequency", "type": "string", "description": "Frequency at which PIK accretes and cash coupons pay (capitalisation frequency)", "enum": ["Annual", "Semiannual", "Quarterly", "Monthly"] },
+    { "name": "accrual_day_count","type": "string", "description": "Day count convention for period accrual", "enum": ["30/360", "Actual360", "Actual365Fixed", "ACT/ACT (ICMA)"] },
+    { "name": "calendar",         "type": "string", "description": "Business day calendar", "enum": ["TARGET", "UnitedStates"] },
+    { "name": "credit_spread_bp", "type": "float",  "description": "Z-spread over the discount curve in basis points (issuer credit premium)" }
+  ],
+  "optional_fields": [
+    {
+      "name": "par",
+      "type": "float",
+      "default": 100,
+      "description": "Initial face / principal value (default 100). Final redemption will exceed this by the total PIK accreted."
+    },
+    {
+      "name": "pik_election",
+      "type": "float",
+      "default": 1.0,
+      "description": "For pik_toggle: fraction of each coupon paid in kind (0.0 = all cash, 1.0 = all PIK, e.g. 0.5 for 50/50). Has no effect for full_pik."
+    },
+    {
+      "name": "pik_rate",
+      "type": "float",
+      "default": null,
+      "description": "Explicit PIK accrual rate if it differs from coupon_rate (e.g. for toggle bonds with a step-up). If omitted, defaults to coupon_rate + pik_rate_step_up."
+    },
+    {
+      "name": "pik_rate_step_up",
+      "type": "float",
+      "default": 0.0,
+      "description": "Additional spread added to coupon_rate to obtain the PIK accrual rate (e.g. 0.0075 for +75 bp). Ignored if pik_rate is set explicitly."
+    },
+    {
+      "name": "business_day_convention",
+      "type": "string",
+      "default": "ModifiedFollowing",
+      "description": "Business day adjustment rule",
+      "enum": ["ModifiedFollowing", "Following", "Unadjusted"]
+    },
+    {
+      "name": "date_generation",
+      "type": "string",
+      "default": "Backward",
+      "description": "Schedule date generation direction",
+      "enum": ["Backward", "Forward"]
+    },
+    {
+      "name": "settlement_days",
+      "type": "int",
+      "default": 2,
+      "description": "Days to settlement (default 2)"
+    },
+    {
+      "name": "first_coupon_date",
+      "type": "string",
+      "default": null,
+      "description": "Override for bonds with a short or long first coupon / capitalisation period (DD-MM-YYYY)"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "default": null,
+      "description": "Settlement currency (e.g. EUR, USD) — used for discount curve selection"
+    },
+    {
+      "name": "description",
+      "type": "string",
+      "default": null,
+      "description": "Human-readable name (e.g. 'Acme Holdings 10% PIK 2029')"
+    }
+  ]
+}

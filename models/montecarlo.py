@@ -1,3 +1,27 @@
+"""Monte Carlo bond pricer using the Hull-White one-factor short-rate model.
+
+Prices callable bonds by simulating short-rate paths under the Hull-White model and
+discounting each path's cash flows independently.  Coupon generation supports the
+same coupon_structure values as hullwhite.py (fixed, floating, fixed_to_float,
+cms_resettable).
+
+Required JSON fields
+--------------------
+  Same structure as hullwhite.py — see that module for the full field list.
+
+Optional JSON fields
+--------------------
+  hw_a              Hull-White mean reversion speed (default 0.03)
+  hw_sigma          Hull-White short-rate volatility (default 0.01)
+  mc_time_steps     Number of time steps per simulated path (default 360)
+  mc_num_paths      Number of Monte Carlo paths (default 5000)
+  mc_seed           Random seed for reproducibility (default 42)
+  issuer_spread_bp  Z-spread override; falls back to credit_spread_bp if absent
+  call_dates        List of callable dates (DD-MM-YYYY) for callable bond simulation
+  call_price        Call price as % of par (default par)
+  callable_type     bermudan | american
+"""
+
 import argparse
 import math
 from pathlib import Path

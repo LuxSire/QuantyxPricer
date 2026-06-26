@@ -1,0 +1,33 @@
+{
+  "model": "barrier_discount",
+  "description": "Barrier Discount Certificate pricer (SSPA 1210). European barrier observed at maturity only. Issued at a discount; investor gives up downside below the barrier in exchange for a discount at inception.",
+  "required_fields": [
+    { "name": "instrument_id",   "type": "string", "description": "ISIN or internal identifier" },
+    { "name": "evaluation_date", "type": "string", "description": "Pricing date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "maturity_date",   "type": "string", "description": "Maturity date / Final Fixing Date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "denomination",    "type": "float",  "description": "Notional / face value (e.g. 1000)" },
+    {
+      "name": "underlyings",
+      "type": "list",
+      "description": "List with one underlying equity object",
+      "item_fields": [
+        { "name": "name",              "type": "string", "description": "Label (also accepted as instrument_id)" },
+        { "name": "initial_fixing",    "type": "float",  "description": "Spot price at trade date" },
+        { "name": "current_price",     "type": "float",  "description": "Current spot price" },
+        { "name": "volatility",        "type": "float",  "description": "Annualised volatility (decimal)" },
+        { "name": "dividend_yield",    "type": "float",  "description": "Annualised dividend yield (decimal)" },
+        { "name": "strike_pct",        "type": "float",  "description": "Strike as % of initial fixing — used to derive conversion_ratio" },
+        { "name": "barrier_pct",       "type": "float",  "description": "European barrier as % of initial fixing (typically above 100)" },
+        { "name": "conversion_ratio",  "type": "float",  "description": "Optional — derived as denomination / strike_level if absent" }
+      ]
+    }
+  ],
+  "optional_fields": [
+    { "name": "quanto_adjustment",  "type": "float", "default": 0.0,  "description": "Annualised quanto drift correction (rho_stock_fx × sigma_stock × sigma_fx). Use when underlying and settlement currencies differ." },
+    { "name": "coupon_schedule",    "type": "list",  "default": [],   "description": "List of {date, amount} for any periodic coupon payments (uncommon for discount certificates)" },
+    { "name": "mc_time_steps",      "type": "int",   "default": 360,  "description": "Number of time steps per simulated path" },
+    { "name": "mc_num_paths",       "type": "int",   "default": 5000, "description": "Number of Monte Carlo paths" },
+    { "name": "mc_seed",            "type": "int",   "default": 42,   "description": "Random seed for reproducibility" },
+    { "name": "issuer_spread_bp",   "type": "float", "default": null, "description": "Z-spread override; falls back to credit_spread_bp if absent" }
+  ]
+}

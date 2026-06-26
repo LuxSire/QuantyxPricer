@@ -1,0 +1,134 @@
+{
+  "model": "abs",
+  "description": "Asset-Backed Security (ABS) and Mortgage-Backed Security (MBS) tranche pricer. Generates monthly pool cash flows using a CPR or PSA prepayment model, applies CDR-based defaults with a recovery lag, then distributes cash flows to the tranche via a sequential waterfall where credit support absorbs losses first. Covers generic ABS (auto loans, credit cards, student loans), agency MBS (Fannie/Freddie/Ginnie pass-throughs, no credit risk) and non-agency/private-label MBS.",
+  "required_fields": [
+    {
+      "name": "instrument_id",
+      "type": "string",
+      "description": "ISIN or internal identifier"
+    },
+    {
+      "name": "evaluation_date",
+      "type": "string",
+      "description": "Pricing date (DD-MM-YYYY or YYYY-MM-DD)"
+    },
+    {
+      "name": "instrument_type",
+      "type": "string",
+      "description": "Collateral and credit-risk structure of the instrument",
+      "enum": ["abs", "mbs_agency", "mbs_non_agency"]
+    },
+    {
+      "name": "pool_balance",
+      "type": "float",
+      "description": "Current outstanding pool balance (face amount)"
+    },
+    {
+      "name": "pool_wac",
+      "type": "float",
+      "description": "Weighted average coupon of the underlying loan pool (decimal or %, auto-normalised)"
+    },
+    {
+      "name": "pool_wam",
+      "type": "int",
+      "description": "Weighted average remaining maturity of the pool in months (integer)"
+    },
+    {
+      "name": "tranche_balance",
+      "type": "float",
+      "description": "Outstanding notional of the tranche being priced"
+    },
+    {
+      "name": "tranche_coupon",
+      "type": "float",
+      "description": "Pass-through / certificate rate of the tranche (decimal or %, auto-normalised)"
+    },
+    {
+      "name": "credit_spread_bp",
+      "type": "float",
+      "description": "Z-spread over the benchmark discount curve in basis points"
+    }
+  ],
+  "optional_fields": [
+    {
+      "name": "pool_seasoning",
+      "type": "int",
+      "default": 0,
+      "description": "Months elapsed since pool origination. Used to position the prepayment ramp correctly for PSA pricing (default 0 = new issue)"
+    },
+    {
+      "name": "cpr",
+      "type": "float",
+      "default": 0.06,
+      "description": "Flat annualised CPR prepayment assumption (default 6%). Used when prepayment_model = cpr or as a base for ABS instrument types."
+    },
+    {
+      "name": "cdr",
+      "type": "float",
+      "default": 0.0,
+      "description": "Annualised conditional default rate of the pool (default 0 for mbs_agency; 0.02 = 2% for abs and mbs_non_agency)"
+    },
+    {
+      "name": "loss_severity",
+      "type": "float",
+      "default": 0.40,
+      "description": "Loss given default as a fraction of defaulted balance (default 0.40 = 40% LGD). Recovery = 1 − loss_severity, received after recovery_lag_months."
+    },
+    {
+      "name": "prepayment_model",
+      "type": "string",
+      "default": "psa",
+      "description": "Prepayment model to use. psa applies the Public Securities Association CPR ramp (standard for US MBS). cpr uses a flat CPR assumption (standard for ABS).",
+      "enum": ["cpr", "psa"]
+    },
+    {
+      "name": "psa_speed",
+      "type": "float",
+      "default": 100.0,
+      "description": "PSA speed as a percentage (100 = 100 PSA = standard ramp to 6% CPR at month 30). Only used when prepayment_model = psa."
+    },
+    {
+      "name": "credit_support_pct",
+      "type": "float",
+      "default": 0.0,
+      "description": "Total subordination below this tranche as a percentage of pool balance (equity + junior tranches). Absorbs losses before they reach this tranche."
+    },
+    {
+      "name": "senior_notes_balance",
+      "type": "float",
+      "default": 0.0,
+      "description": "Aggregate outstanding balance of tranches senior to this one. Senior tranches receive all pool principal first in the sequential waterfall before this tranche is paid. Set to 0 if this is the most senior rated tranche."
+    },
+    {
+      "name": "recovery_lag_months",
+      "type": "int",
+      "default": 6,
+      "description": "Months between the default event and receipt of recoveries from the collateral (default 6)"
+    },
+    {
+      "name": "settlement_days",
+      "type": "int",
+      "default": 2,
+      "description": "Days to settlement (default 2)"
+    },
+    {
+      "name": "calendar",
+      "type": "string",
+      "default": "UnitedStates",
+      "description": "Business day calendar (default UnitedStates for US ABS/MBS)",
+      "enum": ["UnitedStates", "TARGET"]
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "default": null,
+      "description": "Settlement currency (e.g. USD, EUR) — used for benchmark discount curve selection"
+    },
+    {
+      "name": "description",
+      "type": "string",
+      "default": null,
+      "description": "Human-readable name (e.g. 'Ford Auto 2024-A Class A')"
+    }
+  ]
+}

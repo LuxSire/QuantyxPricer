@@ -209,7 +209,7 @@ export default function Sidebar({
         )}
       </div>
 
-      <div style={{ marginTop: 16 }}>
+      <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
         <a
           className="clear-btn clear-btn--api"
           href={`${(apiBase || '').replace(/\/$/, '')}/docs`}
@@ -219,6 +219,14 @@ export default function Sidebar({
           title="Open API documentation"
         >
           API
+        </a>
+        <a
+          className="clear-btn"
+          href="#/settings"
+          style={{ display: 'inline-block', textDecoration: 'none' }}
+          title="Model settings"
+        >
+          Settings
         </a>
       </div>
     </aside>

@@ -131,6 +131,123 @@ export function useAsset(apiBase = '') {
     }
   }, [apiBase])
 
+  const fetchModels = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const base = String(apiBase || '').replace(/\/$/, '')
+      const r = await fetch(`${base}/fetch_models`)
+      if (!r.ok) {
+        setLoading(false)
+        return []
+      }
+      const j = await r.json()
+      setLoading(false)
+      return Array.isArray(j) ? j : []
+    } catch (e) {
+      const errMsg = String(e)
+      setError(errMsg)
+      setLoading(false)
+      return []
+    }
+  }, [apiBase])
+
+  const fetchAssetFields = useCallback(async (instrumentId) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const [assetData, allModels] = await Promise.all([
+        fetchAsset(instrumentId),
+        fetchModels(),
+      ])
+
+      if (!assetData) {
+        setLoading(false)
+        return null
+      }
+
+      const modelName = String(assetData.model || '').trim().toLowerCase()
+      const modelSpec = allModels.find(m => (m.name || '').toLowerCase() === modelName)
+        || { required_fields: [], optional_fields: [] }
+
+      const requiredNames = new Set((modelSpec.required_fields || []).map(f => f.name))
+      const optionalNames = new Set((modelSpec.optional_fields || []).map(f => f.name))
+
+      const fields = []
+
+      // 1. Required fields in schema order, with values from the asset
+      for (const fd of (modelSpec.required_fields || [])) {
+        fields.push({
+          name: fd.name,
+          value: assetData[fd.name] ?? null,
+          type: fd.type || 'string',
+          description: fd.description || '',
+          enum: fd.enum || null,
+          required: true,
+          default: null,
+          inAsset: fd.name in assetData,
+        })
+      }
+
+      // 2. Optional fields that are present in the asset, in schema order
+      for (const fd of (modelSpec.optional_fields || [])) {
+        if (fd.name in assetData) {
+          fields.push({
+            name: fd.name,
+            value: assetData[fd.name],
+            type: fd.type || 'string',
+            description: fd.description || '',
+            enum: fd.enum || null,
+            required: false,
+            default: fd.default ?? null,
+            inAsset: true,
+          })
+        }
+      }
+
+      // 3. Extra fields from the asset not covered by the schema
+      for (const [name, value] of Object.entries(assetData)) {
+        if (!requiredNames.has(name) && !optionalNames.has(name)) {
+          fields.push({ name, value, type: null, description: null, enum: null, required: null, default: null, inAsset: true })
+        }
+      }
+
+      setLoading(false)
+      return { asset: assetData, model: modelSpec, fields, allModels }
+    } catch (e) {
+      const errMsg = String(e)
+      setError(errMsg)
+      setLoading(false)
+      return null
+    }
+  }, [fetchAsset, fetchModels])
+
+  const updateModel = useCallback(async (modelName, requiredFields, optionalFields) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const base = String(apiBase || '').replace(/\/$/, '')
+      const r = await fetch(`${base}/update_model`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: modelName,
+          required_fields: requiredFields,
+          optional_fields: optionalFields,
+        }),
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text().catch(() => '')}`)
+      const j = await r.json()
+      setLoading(false)
+      return j
+    } catch (e) {
+      const errMsg = String(e)
+      setError(errMsg)
+      setLoading(false)
+      throw e
+    }
+  }, [apiBase])
+
   const updateAsset = useCallback(async (updatedData, bondFile, isin) => {
     setLoading(true)
     setError(null)
@@ -166,6 +283,9 @@ export function useAsset(apiBase = '') {
     fetchAsset,
     fetchNopricedAssets,
     fetchUnderlyingAssets,
+    fetchModels,
+    fetchAssetFields,
+    updateModel,
     updateAsset,
   }
 }

@@ -1,3 +1,62 @@
+"""Fixed, floating, fixed-to-float, and CMS bond pricer using the Hull-White interest rate model.
+
+Prices vanilla and structured rate bonds by discounting cash flows off a Hull-White one-factor
+short-rate model.  Callable/putable optionality is handled via QuantLib's CallableBond engine.
+
+Coupon structures (coupon_structure field)
+------------------------------------------
+  fixed            Standard fixed-rate bond.
+  floating         FRN: forward rate from the discount curve + spread, with optional floor.
+  fixed_to_float   Fixed until fixed_rate_end_date, then switches to floating.
+  cms_resettable   CMS-linked coupon with optional convexity and callability adjustment.
+
+Required JSON fields
+--------------------
+  instrument_id            ISIN or internal identifier
+  description              Human-readable name
+  evaluation_date          Pricing date (DD-MM-YYYY or YYYY-MM-DD)
+  issue_date               DD-MM-YYYY or YYYY-MM-DD
+  maturity_date            DD-MM-YYYY or YYYY-MM-DD
+  coupon_frequency         Annual | Semiannual | Quarterly | Monthly
+  accrual_day_count        Actual365Fixed | Actual360 | ACT/ACT (ICMA) | 30/360
+  calendar                 TARGET | UnitedStates
+  business_day_convention  ModifiedFollowing | Following | Unadjusted
+  date_generation          Backward | Forward
+  par                      Face value (e.g. 100)
+  credit_spread_bp         Z-spread over the discount curve in basis points
+  coupon_structure         fixed | floating | fixed_to_float | cms_resettable
+
+  For fixed:
+    fixed_coupon_rate         Annual coupon rate (decimal or %, auto-normalised)
+
+  For floating / fixed_to_float:
+    float_spread              Spread over the forward rate (decimal or %)
+    float_reference_day_count Day count for forward rate calculation (default Actual360)
+    float_floor               Optional floor on the floating coupon
+    fixed_rate_end_date       (fixed_to_float only) switchover date
+
+  For cms_resettable:
+    cms_tenor_years           Underlying swap tenor in years (default 10)
+    cms_coupon_frequency      Fixed-leg frequency of the reference swap
+    cms_day_count             Day count for the CMS leg
+    cms_multiplier            Multiplier on the CMS rate (default 1.0)
+    cms_spread                Additive spread (default 0.0)
+    cms_floor / cms_cap       Optional floor / cap on the resulting coupon
+
+Optional JSON fields
+--------------------
+  hw_a               Hull-White mean reversion speed (default 0.03)
+  hw_sigma           Hull-White short-rate volatility (default 0.01)
+  hw_calibration     Dict — set enabled=false to skip swaption calibration
+  call_dates         List of callable dates (DD-MM-YYYY) for callable bonds
+  call_price         Call price as % of par (default par)
+  callable_type      bermudan | american
+  valuation_mode     to_maturity | to_call (default to_maturity)
+  redemption         Final redemption amount (default par)
+  settlement_days    Days to settlement (default 2)
+  first_coupon_date  Override for irregular first coupon period
+"""
+
 import argparse
 from datetime import date
 
@@ -838,7 +897,7 @@ def price_with_spread_bp(curve, bond_data, spread_bp, curve_json=None):
     return get_model_price(trial_result)
 
 
-def print_bond_result(bond_data, result, curve=None, curve_json=None):
+def print_report(bond_data, result, curve=None, curve_json=None):
     issue_price_pct = get_issue_price_pct(bond_data)
     selected_npv_pct = amount_to_pct(result['selected_npv'], bond_data)
     worst_npv_pct = amount_to_pct(result['npv_to_worst_call'], bond_data)
@@ -1029,7 +1088,7 @@ if __name__ == '__main__':
             except Exception as exc:
                 print_bond_skip(bond_file, exc)
                 continue
-            print_bond_result(bond_data, result, curve, curve_json=curve_json)
+            print_report(bond_data, result, curve, curve_json=curve_json)
         raise SystemExit(0)
 
     bond_data = load_json(Path(args.bond_file))
@@ -1042,7 +1101,7 @@ if __name__ == '__main__':
         curve_json=curve_json,
         discount_curve_name=discount_curve_cfg.get('curve_name'),
     )
-    print_bond_result(bond_data, result, curve, curve_json=curve_json)
+    print_report(bond_data, result, curve, curve_json=curve_json)
     pdf_path = pdf_report.create_pdf_report(
         model_name='hullwhite',
         instrument_id=bond_data.get('instrument_id', 'unknown'),

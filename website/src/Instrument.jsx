@@ -34,8 +34,12 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
   const [newKey, setNewKey] = useState('')
   const [newValue, setNewValue] = useState('')
   const [snack, setSnack] = useState({ visible: false, message: '', type: 'info' })
+  const [dialog, setDialog] = useState(null) // { key, value }
   const [snackHiding, setSnackHiding] = useState(false)
-  const { fetchAsset, updateAsset } = useAsset(apiBase)
+  const { fetchAssetFields, updateAsset } = useAsset(apiBase)
+  const [modelOptions, setModelOptions] = useState([])
+  const [modelFieldData, setModelFieldData] = useState([])
+  const [fields, setFields] = useState([])
 
   useEffect(() => {
     let mounted = true
@@ -45,17 +49,20 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
           if (mounted) setError('No instrument ID available')
           return
         }
-        const j = await fetchAsset(isin)
+        const result = await fetchAssetFields(isin)
         if (!mounted) return
-        if (j) {
-          // Ensure mandatory fields are always present
+        if (result) {
+          const { asset, fields: assetFields, allModels } = result
           const ensured = {
-            ...j,
-            instrument_id: j.instrument_id || isin,
-            model: j.model || '',
-            currency: j.currency || '',
+            ...asset,
+            instrument_id: asset.instrument_id || isin,
+            model: asset.model || '',
+            currency: asset.currency || '',
           }
           setData(ensured)
+          setFields(assetFields)
+          setModelFieldData(allModels)
+          setModelOptions(allModels.map(m => m.name).filter(Boolean))
         } else {
           setError('Could not fetch asset JSON for ' + isin)
         }
@@ -65,7 +72,7 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
     }
     fetchJson()
     return () => { mounted = false }
-  }, [instrumentId, apiBase, bondFile, isin, fetchAsset])
+  }, [instrumentId, apiBase, bondFile, isin, fetchAssetFields])
 
   useEffect(() => {
     let mounted = true
@@ -129,15 +136,13 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
   const colWorst = pp.pv_note_to_worst ?? pp.pv_note_to_worst_call ?? (priceResult && (priceResult.npv_to_worst_call || priceResult.npv_to_worst))
   const colMat = pp.pv_note_to_maturity ?? (priceResult && (priceResult.npv_to_maturity || priceResult.npv_to_maturity))
 
-  // Dynamically distribute all non-null fields from data across three columns
-  const allEntries = Object.entries(data).filter((entry) => {
-    const v = entry[1]
-    return v != null && v !== '' && (typeof v !== 'object' || Object.keys(v).length > 0)
-  })
+  // Ordered list [key, value, required] — required→optional→extra when fields available.
+  const allEntries = (fields.length > 0 ? fields.map(f => [f.name, f.value, f.required]) : Object.entries(data).map(([k, v]) => [k, v, null]))
+    .filter(([, v]) => v != null && v !== '' && (typeof v !== 'object' || Object.keys(v).length > 0))
   const colSize = Math.ceil(allEntries.length / 3)
-  const firstCol = Object.fromEntries(allEntries.slice(0, colSize))
-  const secondCol = Object.fromEntries(allEntries.slice(colSize, colSize * 2))
-  const thirdCol = Object.fromEntries(allEntries.slice(colSize * 2))
+  const col1 = allEntries.slice(0, colSize)
+  const col2 = allEntries.slice(colSize, colSize * 2)
+  const col3 = allEntries.slice(colSize * 2)
 
   const toFiniteNumber = (value) => {
     const n = Number(value)
@@ -207,7 +212,7 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
       )
     }
     if (typeof v === 'string' && lowerKey === 'description') return <pre>{truncate(v, 50)}</pre>
-    return <pre>{typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v)}</pre>
+    return <pre>{typeof v === 'object' ? truncate(JSON.stringify(v), 50) : truncate(String(v), 50)}</pre>
   }
 
   const isDateKey = (k) => {
@@ -251,6 +256,16 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
 
   const renderEditor = (k, fallbackValue) => {
     const value = Object.prototype.hasOwnProperty.call(draftValues, k) ? draftValues[k] : fallbackValue
+    if (k === 'model') {
+      const selected = value == null ? '' : String(value)
+      const opts = modelOptions.includes(selected) ? modelOptions : [...modelOptions, selected].filter(Boolean)
+      return (
+        <select value={selected} onChange={(e) => onDraftChange(k, e.target.value)}>
+          <option value="">(select model)</option>
+          {opts.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+        </select>
+      )
+    }
     if (isDayCountKey(k)) {
       const options = ['Actual360', 'Actual365Fixed', 'Thirty360', '30/360', 'ActualActual', 'ACT/ACT (PERIODIC BASIS)', 'ACT/ACT (ICMA)']
       const selected = value == null ? '' : String(value)
@@ -333,26 +348,17 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
     }
     return rawValue
   }
-  // build table rows: each row contains up to three field/value pairs (col pairs: 1-2, 3-4, 5-6)
-  const entries1 = Object.entries(firstCol).filter((entry) => {
-    const v = entry[1]
-    return v != null && v !== ''
-  })
-  const entries2 = Object.entries(secondCol).filter((entry) => {
-    const v = entry[1]
-    return v != null && v !== ''
-  })
-  const entries3 = Object.entries(thirdCol).filter((entry) => {
-    const v = entry[1]
-    return v != null && v !== ''
-  })
+  // build table rows: each row contains up to three [key, value, required] tuples
+  const entries1 = col1.filter(([, v]) => v != null && v !== '')
+  const entries2 = col2.filter(([, v]) => v != null && v !== '')
+  const entries3 = col3.filter(([, v]) => v != null && v !== '')
   const maxLen = Math.max(entries1.length, entries2.length, entries3.length)
   const rows = []
   for (let i = 0; i < maxLen; i++) {
     rows.push([
-      entries1[i] || [null, null],
-      entries2[i] || [null, null],
-      entries3[i] || [null, null]
+      entries1[i] || [null, null, null],
+      entries2[i] || [null, null, null],
+      entries3[i] || [null, null, null],
     ])
   }
 
@@ -406,6 +412,44 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
     } finally {
       setSaving(false)
     }
+  }
+
+  const openFieldDialog = (k, fallbackValue) => {
+    const current = Object.prototype.hasOwnProperty.call(draftValues, k) ? draftValues[k] : fallbackValue
+    setDialog({ key: k, value: current })
+  }
+
+  const confirmFieldDialog = (newValue) => {
+    if (dialog) onDraftChange(dialog.key, newValue)
+    setDialog(null)
+  }
+
+  const renderEditCell = (k, fallbackValue) => {
+    if (!k) return null
+    const current = Object.prototype.hasOwnProperty.call(draftValues, k) ? draftValues[k] : fallbackValue
+    const preview = current == null
+      ? '—'
+      : typeof current === 'object'
+        ? JSON.stringify(current).slice(0, 60) + (JSON.stringify(current).length > 60 ? '…' : '')
+        : String(current).slice(0, 60) + (String(current).length > 60 ? '…' : '')
+    return (
+      <div
+        title="Click to edit"
+        onClick={() => openFieldDialog(k, fallbackValue)}
+        style={{
+          cursor: 'pointer',
+          padding: '3px 6px',
+          borderRadius: 4,
+          border: '1px dashed #555',
+          minHeight: 24,
+          color: current == null ? '#6b7280' : 'inherit',
+          userSelect: 'none',
+          fontSize: 13,
+        }}
+      >
+        {preview}
+      </div>
+    )
   }
 
   const openTermsheet = async () => {
@@ -596,21 +640,163 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
         <tbody>
           {rows.map((row, ri) => (
             <tr key={ri}>
-              <td className="detail-key" style={{border: 'none', padding: '6px 8px'}}>{row[0][0] || ''}</td>
-              <td className="detail-value" style={{border: 'none', padding: '6px 8px'}}>{editMode ? renderEditor(row[0][0], row[0][1]) : (row[0][1] == null ? '-' : renderValue(row[0][0], row[0][1]))}</td>
+              <td className="detail-key" style={{border: 'none', padding: '6px 8px', color: row[0][2] === true ? '#facc15' : undefined}}>{row[0][0] || ''}</td>
+              <td className="detail-value" style={{border: 'none', padding: '6px 8px'}}>{editMode ? renderEditCell(row[0][0], row[0][1]) : (row[0][1] == null ? '-' : renderValue(row[0][0], row[0][1]))}</td>
 
-              <td className="detail-key" style={{border: 'none', padding: '6px 8px', paddingLeft: '24px', borderLeft: '4px solid rgba(158,167,173,0.5)'}}>{row[1][0] || ''}</td>
-              <td className="detail-value" style={{border: 'none', padding: '6px 8px'}}>{editMode ? renderEditor(row[1][0], row[1][1]) : (row[1][1] == null ? '-' : renderValue(row[1][0], row[1][1]))}</td>
+              <td className="detail-key" style={{border: 'none', padding: '6px 8px', paddingLeft: '24px', borderLeft: '4px solid rgba(158,167,173,0.5)', color: row[1][2] === true ? '#facc15' : undefined}}>{row[1][0] || ''}</td>
+              <td className="detail-value" style={{border: 'none', padding: '6px 8px'}}>{editMode ? renderEditCell(row[1][0], row[1][1]) : (row[1][1] == null ? '-' : renderValue(row[1][0], row[1][1]))}</td>
 
-              <td className="detail-key" style={{border: 'none', padding: '6px 8px', paddingLeft: '24px', borderLeft: '4px solid rgba(158,167,173,0.5)'}}>{row[2][0] || ''}</td>
-              <td className="detail-value" style={{border: 'none', padding: '6px 8px'}}>{editMode ? renderEditor(row[2][0], row[2][1]) : (row[2][1] == null ? '-' : renderValue(row[2][0], row[2][1]))}</td>
+              <td className="detail-key" style={{border: 'none', padding: '6px 8px', paddingLeft: '24px', borderLeft: '4px solid rgba(158,167,173,0.5)', color: row[2][2] === true ? '#facc15' : undefined}}>{row[2][0] || ''}</td>
+              <td className="detail-value" style={{border: 'none', padding: '6px 8px'}}>{editMode ? renderEditCell(row[2][0], row[2][1]) : (row[2][1] == null ? '-' : renderValue(row[2][0], row[2][1]))}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      {dialog && (
+        <FieldDialog
+          fieldKey={dialog.key}
+          fieldValue={dialog.value}
+          isDateKey={isDateKey}
+          isDayCountKey={isDayCountKey}
+          toDateInputValue={toDateInputValue}
+          modelOptions={modelOptions}
+          modelFieldData={modelFieldData}
+          onConfirm={confirmFieldDialog}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {(snack.visible || snackHiding) && (
         <div className={`snackbar snackbar--${snack.type || 'info'} ${snackHiding ? 'hide' : 'show'}`}>{snack.message}</div>
       )}
+    </div>
+  )
+}
+
+function FieldDialog({ fieldKey, fieldValue, isDateKey, isDayCountKey, toDateInputValue, modelOptions = [], modelFieldData = [], onConfirm, onClose }) {
+  const DAY_COUNT_OPTIONS = ['Actual360', 'Actual365Fixed', 'Thirty360', '30/360', 'ActualActual', 'ACT/ACT (PERIODIC BASIS)', 'ACT/ACT (ICMA)']
+
+  const toEditString = (v) => {
+    if (v == null) return ''
+    if (typeof v === 'object') return JSON.stringify(v, null, 2)
+    return String(v)
+  }
+
+  const [localValue, setLocalValue] = useState(toEditString(fieldValue))
+
+  const handleConfirm = () => {
+    const trimmed = typeof localValue === 'string' ? localValue.trim() : localValue
+    // try to parse JSON if it looks like an object/array
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try { onConfirm(JSON.parse(trimmed)); return } catch {}
+    }
+    onConfirm(localValue)
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Escape') onClose()
+    if (e.key === 'Enter' && !e.shiftKey && !(e.target.tagName === 'TEXTAREA')) handleConfirm()
+  }
+
+  const renderInput = () => {
+    if (fieldKey === 'model') {
+      const opts = modelOptions.includes(localValue) ? modelOptions : [...modelOptions, localValue].filter(Boolean)
+      const selectedModel = modelFieldData.find(m => m.name === localValue)
+      return (
+        <>
+          <select
+            autoFocus
+            value={localValue}
+            onChange={(e) => setLocalValue(e.target.value)}
+            style={{ width: '100%', padding: '6px 8px', fontSize: 14, background: '#1e293b', color: '#f1f5f9', border: '1px solid #444', borderRadius: 4 }}
+          >
+            <option value="">(select model)</option>
+            {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+          {selectedModel && (
+            <div style={{ marginTop: 8, fontSize: 12, color: '#94a3b8', lineHeight: 1.6 }}>
+              <div><span style={{ color: '#cbd5e1', fontWeight: 600 }}>Required: </span>{(selectedModel.required_fields || []).map(f => f.name).join(', ') || '—'}</div>
+              <div><span style={{ color: '#cbd5e1', fontWeight: 600 }}>Optional: </span>{(selectedModel.optional_fields || []).map(f => f.name).join(', ') || '—'}</div>
+            </div>
+          )}
+        </>
+      )
+    }
+    if (isDayCountKey(fieldKey)) {
+      const opts = DAY_COUNT_OPTIONS.includes(localValue) ? DAY_COUNT_OPTIONS : [...DAY_COUNT_OPTIONS, localValue].filter(Boolean)
+      return (
+        <select
+          autoFocus
+          value={localValue}
+          onChange={(e) => setLocalValue(e.target.value)}
+          style={{ width: '100%', padding: '6px 8px', fontSize: 14, background: '#1e293b', color: '#f1f5f9', border: '1px solid #444', borderRadius: 4 }}
+        >
+          <option value="">(empty)</option>
+          {opts.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      )
+    }
+    if (isDateKey(fieldKey)) {
+      return (
+        <input
+          autoFocus
+          type="date"
+          value={toDateInputValue(localValue)}
+          onChange={(e) => setLocalValue(e.target.value)}
+          style={{ width: '100%', padding: '6px 8px', fontSize: 14, background: '#1e293b', color: '#f1f5f9', border: '1px solid #444', borderRadius: 4 }}
+        />
+      )
+    }
+    // For objects/arrays or long values: textarea
+    const isLong = localValue.length > 60 || localValue.includes('\n')
+    const isObj = localValue.trim().startsWith('{') || localValue.trim().startsWith('[')
+    if (isLong || isObj) {
+      return (
+        <textarea
+          autoFocus
+          value={localValue}
+          onChange={(e) => setLocalValue(e.target.value)}
+          rows={Math.max(6, Math.min(20, localValue.split('\n').length + 2))}
+          style={{ width: '100%', padding: '6px 8px', fontSize: 13, fontFamily: 'monospace', background: '#1e293b', color: '#f1f5f9', border: '1px solid #444', borderRadius: 4, resize: 'vertical', boxSizing: 'border-box' }}
+        />
+      )
+    }
+    return (
+      <input
+        autoFocus
+        type="text"
+        value={localValue}
+        onChange={(e) => setLocalValue(e.target.value)}
+        onKeyDown={handleKeyDown}
+        style={{ width: '100%', padding: '6px 8px', fontSize: 14, background: '#1e293b', color: '#f1f5f9', border: '1px solid #444', borderRadius: 4, boxSizing: 'border-box' }}
+      />
+    )
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={handleKeyDown}
+        style={{
+          background: '#1e293b', borderRadius: 8, padding: 24, minWidth: 380, maxWidth: 600, width: '90%',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, color: '#94a3b8', fontFamily: 'monospace' }}>
+          {fieldKey}
+        </div>
+        {renderInput()}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          <button className="clear-btn" onClick={onClose}>Cancel</button>
+          <button className="clear-btn" onClick={handleConfirm}>Save</button>
+        </div>
+      </div>
     </div>
   )
 }

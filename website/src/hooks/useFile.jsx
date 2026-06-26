@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react'
 
-export default function FileUploader({ onClose, onSaved }) {
+export default function useFile({ onClose, onSaved }) {
   const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState(null)
   const [saving, setSaving] = useState(false)

@@ -2,6 +2,8 @@
 
 import requests
 import json
+import pandas as pd
+import DatastreamPy as dsweb
 import os
 from typing import Optional, Dict, Any
 from pathlib import Path
@@ -28,7 +30,33 @@ CBONDS_AUTH = {
     "password": CBONDS_PASSWORD
 }
 
+DS_ID = (os.getenv('DS_ID') or '').strip()
+DS_PWD = (os.getenv('DS_PWD') or '').strip()
 
+def fetch_from_ds(symbol, start='Y', end='0D', freq='D'):
+    """
+    Fetch instrument data from Datastream API.
+
+    Args:
+        symbol: The symbol to query
+        start: Start date (default 'Y' for 1 year ago)
+        end: End date (default '0D' for today)
+        freq: Frequency (default 'D' for daily)
+
+    Returns:
+        List of dicts with Date and P (price) fields.
+    """
+    ds = dsweb.DataClient(None, DS_ID, DS_PWD)
+
+    df = ds.get_data(
+        tickers=symbol,
+        fields=['P'],
+        start=start,
+        end=end,
+        freq=freq
+    )
+    return json.loads(df.to_json(orient='records', date_format='iso'))
+    
 def fetch_from_cbonds(isin_code: str) -> Optional[Dict[str, Any]]:
     """
     Fetch instrument data from cbonds API.

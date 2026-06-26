@@ -1,0 +1,27 @@
+{
+  "model": "inflation_linked",
+  "description": "Plain-vanilla inflation-linked bond pricer. Covers government-style linkers such as US TIPS, UK Gilts, OATi, OAT€i, and BTP-i. Coupons and redemption are scaled by a projected CPI index ratio.",
+  "required_fields": [
+    { "name": "instrument_id",        "type": "string", "description": "ISIN or internal identifier" },
+    { "name": "evaluation_date",      "type": "string", "description": "Pricing date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "issue_date",           "type": "string", "description": "Issue date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "maturity_date",        "type": "string", "description": "Maturity date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "real_coupon_rate",     "type": "float",  "description": "Annual real coupon rate (decimal or %, auto-normalised)" },
+    { "name": "base_cpi",             "type": "float",  "description": "CPI index level at issuance — denominator of the index ratio" },
+    { "name": "current_cpi",          "type": "float",  "description": "CPI index level at or near the evaluation date" },
+    { "name": "annual_inflation_rate","type": "float",  "description": "Forward flat inflation rate used to project the index ratio (decimal or %)" },
+    { "name": "coupon_frequency",     "type": "string", "description": "Coupon payment frequency", "enum": ["Annual", "Semiannual", "Quarterly", "Monthly"] },
+    { "name": "accrual_day_count",    "type": "string", "description": "Day count convention (typically ACT/ACT (ICMA) for government linkers)", "enum": ["ACT/ACT (ICMA)", "Actual365Fixed", "Actual360", "30/360"] },
+    { "name": "calendar",             "type": "string", "description": "Holiday calendar", "enum": ["TARGET", "UnitedStates"] }
+  ],
+  "optional_fields": [
+    { "name": "business_day_convention", "type": "string", "default": "ModifiedFollowing", "description": "Business day adjustment", "enum": ["ModifiedFollowing", "Following", "Unadjusted"] },
+    { "name": "date_generation",         "type": "string", "default": "Backward",          "description": "Schedule generation direction", "enum": ["Backward", "Forward"] },
+    { "name": "par",                     "type": "float",  "default": 100.0,               "description": "Face value" },
+    { "name": "credit_spread_bp",        "type": "float",  "default": 0.0,                 "description": "Z-spread over the discount curve in basis points" },
+    { "name": "settlement_days",         "type": "int",    "default": 2,                   "description": "Days to settlement" },
+    { "name": "redemption_floor",        "type": "bool",   "default": true,                "description": "If true, inflation-accreted redemption is floored at par (standard for TIPS, UK Gilts)" },
+    { "name": "nominal_yield",           "type": "float",  "default": null,                "description": "Nominal YTM of an equivalent nominal bond — used to compute breakeven inflation" },
+    { "name": "first_coupon_date",       "type": "string", "default": null,                "description": "Override for irregular first coupon period (DD-MM-YYYY)" }
+  ]
+}

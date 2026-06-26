@@ -212,6 +212,49 @@ def select_price(code: str) -> Optional[Dict[str, Any]]:
         conn.close()
 
 
+def select_models() -> list[dict]:
+    """Return all models with name, required_fields, and optional_fields from the models table."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT name, required_fields, optional_fields FROM models')
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+
+        result = []
+        for row in rows:
+            rf = row.get('required_fields')
+            of = row.get('optional_fields')
+            result.append({
+                'name': row['name'],
+                'required_fields': json.loads(rf) if rf else [],
+                'optional_fields': json.loads(of) if of else [],
+            })
+        return result
+    finally:
+        conn.close()
+
+
+def update_model(name: str, required_fields: list, optional_fields: list) -> None:
+    """Update required_fields and optional_fields for a model via stored procedure."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        try:
+            cursor.callproc('update_model', [
+                name,
+                json.dumps(required_fields, ensure_ascii=False),
+                json.dumps(optional_fields, ensure_ascii=False),
+            ])
+            conn.commit()
+        finally:
+            cursor.close()
+    finally:
+        conn.close()
+
+
 def insert_prices_from_file(file_path: Union[str, Path]) -> int:
     """Load JSON price data from a file and call insert_prices."""
     path = Path(file_path)

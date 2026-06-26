@@ -1,0 +1,41 @@
+{
+  "model": "spire",
+  "description": "Structured note pricer using the Spire collateral + swap framework. Prices capital-protected and partial-protection structured notes. For inflation-linked structured notes use index_linked.",
+  "required_fields": [
+    { "name": "instrument_id",            "type": "string", "description": "ISIN or internal identifier" },
+    { "name": "evaluation_date",          "type": "string", "description": "Pricing date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "coupon_structure",         "type": "string", "description": "Must be 'fixed'", "enum": ["fixed"] },
+    { "name": "note_notional",            "type": "float",  "description": "Notional of the note (e.g. 100000000)" },
+    { "name": "coupon_frequency",         "type": "string", "description": "Coupon payment frequency", "enum": ["Annual", "Semiannual", "Quarterly", "Monthly"] },
+    { "name": "accrual_day_count",        "type": "string", "description": "Day count convention for the note leg" },
+    { "name": "calendar",                 "type": "string", "description": "Holiday calendar", "enum": ["TARGET", "UnitedStates"] },
+    { "name": "business_day_convention",  "type": "string", "description": "Business day adjustment", "enum": ["ModifiedFollowing", "Following", "Unadjusted"] },
+    {
+      "name": "collateral",
+      "type": "object",
+      "description": "Collateral bond backing the structured note",
+      "fields": [
+        { "name": "principal_amount",         "type": "float",  "description": "Principal of the collateral bond (also accepted as 'principal')" },
+        { "name": "coupon_rate",              "type": "float",  "description": "Fixed coupon rate of the collateral bond" },
+        { "name": "issue_date",               "type": "string", "description": "Collateral issue date (DD-MM-YYYY or YYYY-MM-DD)" },
+        { "name": "maturity_date",            "type": "string", "description": "Collateral maturity date (DD-MM-YYYY or YYYY-MM-DD)" },
+        { "name": "coupon_frequency",         "type": "string", "description": "Collateral coupon frequency" },
+        { "name": "calendar",                 "type": "string", "description": "Collateral holiday calendar" },
+        { "name": "business_day_convention",  "type": "string", "description": "Collateral business day convention" },
+        { "name": "day_count",                "type": "string", "description": "Day count for the collateral accrual" },
+        { "name": "discount_curve_name",      "type": "string", "description": "Curve name to discount collateral cash flows" }
+      ]
+    }
+  ],
+  "optional_fields": [
+    { "name": "credit_spread_bp",                   "type": "float",  "default": 0.0,         "description": "Issuer spread on the note (basis points)" },
+    { "name": "collateral_spread_bp",               "type": "float",  "default": 0.0,         "description": "Additional spread applied to the collateral leg (basis points)" },
+    { "name": "issue_price",                        "type": "float",  "default": 100.0,       "description": "Issue price as % of note_notional" },
+    { "name": "redemption",                         "type": "float",  "default": null,        "description": "Final redemption amount or pct (default = par)" },
+    { "name": "issuer_call",                        "type": "string", "default": null,        "description": "Set to 'Applicable' to enable a call schedule" },
+    { "name": "call_dates",                         "type": "list",   "default": [],          "description": "List of call dates (DD-MM-YYYY)" },
+    { "name": "callable_type",                      "type": "string", "default": "bermudan",  "description": "Callability type", "enum": ["bermudan", "autocallable"] },
+    { "name": "autocall_trigger",                   "type": "object", "default": null,        "description": "Dict with trigger_level_pct, monte_carlo_paths, monte_carlo_vol for autocall simulation" },
+    { "name": "valuation_mode",                     "type": "string", "default": "to_maturity", "description": "Which redemption scenario to use as NPV", "enum": ["to_maturity", "to_first_call", "to_worst_call"] }
+  ]
+}

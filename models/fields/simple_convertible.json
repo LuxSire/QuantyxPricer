@@ -1,0 +1,34 @@
+{
+  "model": "simple_convertible",
+  "aliases": ["simple_reverse_convertible"],
+  "description": "Simple convertible / reverse convertible pricer. Worst-of on one or multiple underlyings with no barrier monitoring. Supports both reverse convertible (short put) and standard convertible (long call) payoffs.",
+  "required_fields": [
+    { "name": "instrument_id",    "type": "string", "description": "ISIN or internal identifier" },
+    { "name": "evaluation_date",  "type": "string", "description": "Pricing date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "maturity_date",    "type": "string", "description": "Maturity date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "denomination",     "type": "float",  "description": "Notional / face value (e.g. 1000)" },
+    { "name": "coupon_schedule",  "type": "list",   "description": "List of {date (DD-MM-YYYY), amount} objects for periodic coupon payments" },
+    {
+      "name": "underlyings",
+      "type": "list",
+      "description": "List of underlying equity objects",
+      "item_fields": [
+        { "name": "name",              "type": "string", "description": "Label (also accepted as instrument_id)" },
+        { "name": "initial_fixing",    "type": "float",  "description": "Spot price at trade date" },
+        { "name": "current_price",     "type": "float",  "description": "Current spot price" },
+        { "name": "volatility",        "type": "float",  "description": "Annualised volatility (decimal)" },
+        { "name": "dividend_yield",    "type": "float",  "description": "Annualised dividend yield (decimal)" },
+        { "name": "strike_pct",        "type": "float",  "description": "Strike as % of initial fixing (e.g. 100)" },
+        { "name": "conversion_ratio",  "type": "float",  "description": "Optional — derived as denomination / strike_level if absent" }
+      ]
+    }
+  ],
+  "optional_fields": [
+    { "name": "convertible_type",  "type": "string", "default": "reverse", "description": "Payoff structure", "enum": ["reverse", "standard"] },
+    { "name": "mc_time_steps",     "type": "int",    "default": 360,       "description": "Number of time steps per simulated path" },
+    { "name": "mc_num_paths",      "type": "int",    "default": 5000,      "description": "Number of Monte Carlo paths" },
+    { "name": "mc_seed",           "type": "int",    "default": 42,        "description": "Random seed for reproducibility" },
+    { "name": "issuer_spread_bp",  "type": "float",  "default": null,      "description": "Z-spread override; falls back to credit_spread_bp if absent" },
+    { "name": "correlation",       "type": "list",   "default": null,      "description": "NxN correlation matrix for multi-underlying paths (list of lists of floats)" }
+  ]
+}

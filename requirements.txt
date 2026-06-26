@@ -10,3 +10,5 @@ PyPDF2==3.0.1
 numpy
 mysql-connector-python
 python-dotenv
+DatastreamPy
+pytz

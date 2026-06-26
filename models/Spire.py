@@ -1,3 +1,48 @@
+"""Structured note pricer using the Spire collateral + swap framework.
+
+Prices capital-protected and partial-protection structured notes constructed as:
+
+  Note PV = Collateral PV + Swap adjustments − Issuer spread PV
+
+Supports fixed, autocallable, and Bermudan-callable structures.  For inflation-linked
+structured channel notes use index_linked.py; for plain-vanilla government linkers use
+inflation_linked.py.
+
+Required JSON fields
+--------------------
+  instrument_id            ISIN or internal identifier
+  evaluation_date          Pricing date (DD-MM-YYYY or YYYY-MM-DD)
+  coupon_structure         Must be 'fixed' (index_linked has its own module)
+  note_notional            Notional of the note (e.g. 100000000)
+  coupon_frequency         Annual | Semiannual | Quarterly | Monthly
+  accrual_day_count        Day count convention
+  calendar                 TARGET | UnitedStates
+  business_day_convention  ModifiedFollowing | Following | Unadjusted
+
+  collateral               Object describing the underlying collateral bond:
+    principal_amount / principal   Principal of the collateral bond
+    coupon_rate                    Fixed coupon rate of the collateral
+    issue_date                     DD-MM-YYYY or YYYY-MM-DD
+    maturity_date                  DD-MM-YYYY or YYYY-MM-DD
+    coupon_frequency               Annual | Semiannual etc.
+    calendar                       TARGET | UnitedStates
+    business_day_convention        ModifiedFollowing | Following | Unadjusted
+    day_count                      Day count convention
+    discount_curve_name            Curve to discount collateral cash flows
+
+Optional JSON fields
+--------------------
+  credit_spread_bp           Issuer spread on the note (default 0)
+  collateral_spread_bp       Additional spread applied to the collateral leg (default 0)
+  issue_price                Issue price as % of note_notional (default 100)
+  redemption                 Final redemption amount or pct (default par)
+  issuer_call                Set to 'Applicable' to enable a call schedule
+  call_dates                 List of call dates (DD-MM-YYYY)
+  callable_type              bermudan | autocallable
+  autocall_trigger           Dict with trigger_level_pct, monte_carlo_paths, monte_carlo_vol
+  valuation_mode             to_maturity | to_first_call | to_worst_call (default to_maturity)
+"""
+
 import argparse
 from datetime import date
 import json

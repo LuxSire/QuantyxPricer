@@ -1,0 +1,35 @@
+{
+  "model": "at1",
+  "description": "Additional Tier 1 (AT1 / CoCo) perpetual bond pricer. Prices fixed-to-reset perpetual subordinated bank capital instruments assuming call at first_call_date (market convention). Computes YTC, projected reset coupon, extension scenario (price to perpetuity), and bail-in distance-to-trigger metrics. Loss absorption can be write-down or equity conversion.",
+  "required_fields": [
+    { "name": "instrument_id",         "type": "string", "description": "ISIN or internal identifier" },
+    { "name": "description",           "type": "string", "description": "Human-readable name (e.g. 'BNP 6.625% AT1 Perp NC5')" },
+    { "name": "evaluation_date",       "type": "string", "description": "Pricing date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "issue_date",            "type": "string", "description": "Issue date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "first_call_date",       "type": "string", "description": "First optional call / reset date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "fixed_coupon_rate",     "type": "float",  "description": "Fixed coupon rate until first_call_date (decimal or %, auto-normalised)" },
+    { "name": "reset_spread",          "type": "float",  "description": "Spread added to the reference swap rate at each reset (decimal or bp)" },
+    { "name": "reset_reference_tenor", "type": "string", "description": "Tenor of the reference rate used at reset dates (e.g. '5Y', '10Y')" },
+    { "name": "cet1_trigger_pct",      "type": "float",  "description": "CET1 ratio (%) below which bail-in fires (e.g. 5.125 or 7.0)" },
+    { "name": "loss_absorption",       "type": "string", "description": "Mechanism activated at the bail-in trigger", "enum": ["write_down", "equity_conversion"] },
+    { "name": "accrual_day_count",     "type": "string", "description": "Day count convention for coupon accrual", "enum": ["ACT/ACT (ICMA)", "30/360", "Actual365Fixed"] },
+    { "name": "coupon_frequency",      "type": "string", "description": "Coupon payment frequency", "enum": ["Annual", "Semiannual"] },
+    { "name": "calendar",              "type": "string", "description": "Business day calendar", "enum": ["TARGET", "UnitedStates"] },
+    { "name": "credit_spread_bp",      "type": "float",  "description": "Z-spread over the discount curve in basis points (issuer credit and subordination premium)" }
+  ],
+  "optional_fields": [
+    { "name": "par",                      "type": "float",  "default": 100,            "description": "Face / redemption value (default 100)" },
+    { "name": "business_day_convention",  "type": "string", "default": "ModifiedFollowing", "description": "Business day adjustment rule", "enum": ["ModifiedFollowing", "Following", "Unadjusted"] },
+    { "name": "date_generation",          "type": "string", "default": "Backward",     "description": "Schedule date generation direction", "enum": ["Backward", "Forward"] },
+    { "name": "settlement_days",          "type": "int",    "default": 2,              "description": "Days to settlement (default 2)" },
+    { "name": "cet1_current_pct",         "type": "float",  "default": null,           "description": "Current CET1 ratio (%) of the issuer — used to compute distance_to_trigger" },
+    { "name": "conversion_price",         "type": "float",  "default": null,           "description": "For equity_conversion type: share price floor at which principal converts to equity (informational)" },
+    { "name": "call_frequency_years",     "type": "int",    "default": 5,              "description": "Interval in years between call / reset dates after first_call_date (informational)" },
+    { "name": "price_convention",         "type": "string", "default": "to_first_call","description": "Which scenario to use as the primary NPV", "enum": ["to_first_call", "to_perpetuity"] },
+    { "name": "perpetuity_horizon_years", "type": "int",    "default": 50,             "description": "Number of years to model in the extension (non-call) scenario" },
+    { "name": "first_coupon_date",        "type": "string", "default": null,           "description": "Override for bonds with a short or long first coupon period (DD-MM-YYYY)" },
+    { "name": "currency",                 "type": "string", "default": null,           "description": "Settlement currency (e.g. EUR, USD) — used for discount curve selection" },
+    { "name": "hw_a",                     "type": "float",  "default": 0.03,           "description": "Hull-White mean reversion speed (used if calibration is active)" },
+    { "name": "hw_sigma",                 "type": "float",  "default": 0.01,           "description": "Hull-White short-rate volatility (used if calibration is active)" }
+  ]
+}

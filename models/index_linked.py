@@ -1,3 +1,44 @@
+"""Inflation-linked structured channel note pricer (Spire framework).
+
+Prices structured notes where both coupons and redemption are linked to an inflation
+index ratio, built on the Spire collateral + swap framework.  The index ratio is
+projected forward from a known level using a flat annual inflation assumption.
+
+For plain-vanilla government linkers (TIPS, UK Gilts, OATi, BTP-i) use
+inflation_linked.py instead.
+
+Index ratio projection
+----------------------
+  IndexRatio(d) = index_ratio_at_eval × (1 + annual_index_growth_rate) ^ year_fraction(eval, d)
+
+Required JSON fields
+--------------------
+  instrument_id            ISIN or internal identifier
+  evaluation_date          Pricing date (DD-MM-YYYY or YYYY-MM-DD)
+  coupon_structure         Must be 'index_linked'
+  note_notional            Notional of the note (e.g. 100000000)
+  coupon_frequency         Annual | Semiannual | Quarterly | Monthly
+  accrual_day_count        Day count convention
+  calendar                 TARGET | UnitedStates
+  business_day_convention  ModifiedFollowing | Following | Unadjusted
+  collateral               Collateral bond object — see spire.py for full structure
+
+  index_linked_assumption  Object with:
+    index_ratio_at_eval          Current index ratio at evaluation date
+    annual_index_growth_rate     Forward flat inflation rate (decimal or %)
+    coupon_multiplier            Real coupon rate / multiplier applied to each coupon
+
+Optional JSON fields
+--------------------
+  index_linked_terms         Object declaring contractual term fields
+                             (used only for completeness validation, not pricing)
+  missing_contractual_terms  List of terms acknowledged as contractually missing
+  credit_spread_bp           Issuer spread on the note (default 0)
+  collateral_spread_bp       Additional spread on the collateral leg (default 0)
+  issuer_call                Set to 'Applicable' to enable a call schedule
+  call_dates                 List of call dates (DD-MM-YYYY)
+"""
+
 import argparse
 from pathlib import Path
 

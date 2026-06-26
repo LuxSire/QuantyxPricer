@@ -34,6 +34,7 @@ class Asset:
     call_price: Optional[float] = None
     target_price: Optional[float] = None
     underlying: Optional['Asset'] = None
+    underlyings: Optional[List['Asset']] = None
     underlying_volatility: Optional[float] = None
     extra_fields: Dict[str, Any] = field(default_factory=dict)
     
@@ -60,13 +61,20 @@ class Asset:
         
         for key, value in normalized_data.items():
             if key == 'underlying' and isinstance(value, dict):
-                # Create an Asset instance for the underlying asset
                 underlying_data = dict(value)
-                # Use ticker as instrument_id if available
                 if 'ticker' in underlying_data and 'instrument_id' not in underlying_data:
                     underlying_data['instrument_id'] = underlying_data['ticker']
                 asset_data['underlying'] = cls.from_dict(underlying_data)
-            elif key in known_fields and key not in {'extra_fields', 'underlying'}:
+            elif key == 'underlyings' and isinstance(value, list):
+                ul_list = []
+                for ul_data in value:
+                    if isinstance(ul_data, dict):
+                        ud = dict(ul_data)
+                        if 'ticker' in ud and 'instrument_id' not in ud:
+                            ud['instrument_id'] = ud['ticker']
+                        ul_list.append(cls.from_dict(ud))
+                asset_data['underlyings'] = ul_list
+            elif key in known_fields and key not in {'extra_fields', 'underlying', 'underlyings'}:
                 asset_data[key] = value
             else:
                 extra_fields[key] = value  # ← unknown fields go here
@@ -172,6 +180,8 @@ class Asset:
                 continue
             if field_name == 'underlying' and isinstance(value, Asset):
                 result[field_name] = value.to_dict()
+            elif field_name == 'underlyings' and isinstance(value, list):
+                result[field_name] = [u.to_dict() if isinstance(u, Asset) else u for u in value]
             else:
                 result[field_name] = value
         

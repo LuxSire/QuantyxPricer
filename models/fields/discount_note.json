@@ -1,0 +1,76 @@
+{
+  "model": "discount_note",
+  "description": "Discount note pricer for repos, commercial paper, and short-term interest-bearing instruments. Prices any money-market instrument whose value is a single maturity cash flow discounted back using a risk-free curve plus a credit z-spread. Supports both zero-coupon (discount) and simple-interest (interest_bearing) payoff structures.",
+  "required_fields": [
+    { "name": "instrument_id",   "type": "string", "description": "ISIN or internal identifier" },
+    { "name": "evaluation_date", "type": "string", "description": "Pricing date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "issue_date",      "type": "string", "description": "Start date of the instrument — repo open leg date for repos (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "maturity_date",   "type": "string", "description": "Maturity / repurchase date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "face_value",      "type": "float",  "description": "Face / redemption amount (e.g. 1000000). For repos: initial cash lent or borrowed." }
+  ],
+  "optional_fields": [
+    {
+      "name": "instrument_type",
+      "type": "string",
+      "default": "discount",
+      "description": "Payoff structure of the instrument",
+      "enum": ["discount", "interest_bearing"]
+    },
+    {
+      "name": "coupon_rate",
+      "type": "float",
+      "default": 0.0,
+      "description": "Annualised rate for interest_bearing instruments (decimal or %). For repos: the repo rate. Maturity CF = face_value × (1 + coupon_rate × t)."
+    },
+    {
+      "name": "day_count",
+      "type": "string",
+      "default": "Actual360",
+      "description": "Day count convention for time fraction and money-market yield calculations",
+      "enum": ["Actual360", "Actual365Fixed", "ACT/ACT (ICMA)"]
+    },
+    {
+      "name": "credit_spread_bp",
+      "type": "float",
+      "default": 0,
+      "description": "Z-spread over the discount curve in basis points (issuer credit premium)"
+    },
+    {
+      "name": "settlement_days",
+      "type": "int",
+      "default": 0,
+      "description": "Days to settlement. Default 0 (same-day, standard money-market convention). Use 2 for T+2 markets."
+    },
+    {
+      "name": "calendar",
+      "type": "string",
+      "default": "TARGET",
+      "description": "Holiday calendar for settlement date adjustment",
+      "enum": ["TARGET", "UnitedStates"]
+    },
+    {
+      "name": "description",
+      "type": "string",
+      "default": null,
+      "description": "Human-readable name of the instrument (e.g. 'Apple CP 3M' or 'GC Repo EUR O/N')"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "default": null,
+      "description": "Settlement currency (e.g. EUR, USD) — used for curve selection"
+    },
+    {
+      "name": "repo_collateral",
+      "type": "object",
+      "default": null,
+      "description": "Collateral details for repo instruments (informational only — not used in pricing)",
+      "fields": [
+        { "name": "instrument_id",  "type": "string", "description": "ISIN or identifier of the collateral security" },
+        { "name": "description",    "type": "string", "description": "Human-readable name of the collateral" },
+        { "name": "market_value",   "type": "float",  "description": "Current dirty market value of the collateral" },
+        { "name": "haircut_pct",    "type": "float",  "description": "Haircut percentage applied to collateral value (e.g. 2.0 for 2%)" }
+      ]
+    }
+  ]
+}

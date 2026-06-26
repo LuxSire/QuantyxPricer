@@ -1,0 +1,43 @@
+{
+  "model": "autocallable_reverse_convertible",
+  "description": "Autocallable Reverse Convertible pricer. Worst-of on one or multiple underlyings with autocall observation dates and continuous barrier monitoring. Monte Carlo (GBM with Cholesky correlation).",
+  "required_fields": [
+    { "name": "instrument_id",    "type": "string", "description": "ISIN or internal identifier" },
+    { "name": "evaluation_date",  "type": "string", "description": "Pricing date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "maturity_date",    "type": "string", "description": "Maturity date (DD-MM-YYYY or YYYY-MM-DD)" },
+    { "name": "denomination",     "type": "float",  "description": "Notional / face value (e.g. 1000)" },
+    { "name": "coupon_schedule",  "type": "list",   "description": "List of {date (DD-MM-YYYY), amount} objects for periodic coupon payments" },
+    {
+      "name": "autocall_schedule",
+      "type": "list",
+      "description": "Ordered list of autocall observation events",
+      "item_fields": [
+        { "name": "date",               "type": "string", "description": "Observation date (DD-MM-YYYY)" },
+        { "name": "autocall_level_pct", "type": "float",  "description": "Trigger level as % of initial fixing for all underlyings (e.g. 100)" }
+      ]
+    },
+    {
+      "name": "underlyings",
+      "type": "list",
+      "description": "List of underlying equity objects",
+      "item_fields": [
+        { "name": "name",              "type": "string", "description": "Label (also accepted as instrument_id)" },
+        { "name": "initial_fixing",    "type": "float",  "description": "Spot price at trade date" },
+        { "name": "current_price",     "type": "float",  "description": "Current spot price" },
+        { "name": "volatility",        "type": "float",  "description": "Annualised volatility (decimal)" },
+        { "name": "dividend_yield",    "type": "float",  "description": "Annualised dividend yield (decimal)" },
+        { "name": "strike_pct",        "type": "float",  "description": "Strike as % of initial fixing (e.g. 100)" },
+        { "name": "barrier_pct",       "type": "float",  "description": "Barrier level as % of initial fixing (e.g. 65)" },
+        { "name": "conversion_ratio",  "type": "float",  "description": "Optional — derived as denomination / strike_level if absent" }
+      ]
+    }
+  ],
+  "optional_fields": [
+    { "name": "mc_time_steps",              "type": "int",    "default": 360,  "description": "Number of time steps per simulated path" },
+    { "name": "mc_num_paths",               "type": "int",    "default": 5000, "description": "Number of Monte Carlo paths" },
+    { "name": "mc_seed",                    "type": "int",    "default": 42,   "description": "Random seed for reproducibility" },
+    { "name": "issuer_spread_bp",           "type": "float",  "default": null, "description": "Z-spread override; falls back to credit_spread_bp if absent" },
+    { "name": "barrier_observation_period", "type": "object", "default": null, "description": "Dict with 'start' and 'end' (DD-MM-YYYY) to restrict barrier monitoring to a sub-period" },
+    { "name": "correlation",                "type": "list",   "default": null, "description": "NxN correlation matrix for multi-underlying paths (list of lists of floats)" }
+  ]
+}

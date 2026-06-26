@@ -57,6 +57,7 @@ from .helper import (
     get_calendar,
     load_json,
     build_discount_curve,
+    build_discount_curve_and_dc,
     build_note_dates,
     build_regular_schedule,
     discount_factor_with_issuer_spread,
@@ -339,8 +340,8 @@ def price_asset(note_data, curve_json):
 
     note_curve_cfg,       note_curve_name       = select_note_curve(note_data, curve_json)
     collateral_curve_cfg, collateral_curve_name = select_collateral_curve(note_data, curve_json)
-    note_curve,       note_curve_day_count       = build_discount_curve(note_curve_cfg,       evaluation_date)
-    collateral_curve, collateral_curve_day_count = build_discount_curve(collateral_curve_cfg, evaluation_date)
+    note_curve,       note_curve_day_count       = build_discount_curve_and_dc(note_curve_cfg,       evaluation_date)
+    collateral_curve, collateral_curve_day_count = build_discount_curve_and_dc(collateral_curve_cfg, evaluation_date)
 
     note_notional = float(note_data.get('note_notional', 100_000_000.0))
     issue_price   = float(note_data.get('issue_price', 100.0))
@@ -442,9 +443,13 @@ def print_report(note_data, result):
     print(f"Identity error %: {pct['identity_error']:.8f}")
     monte = result.get('note_leg', {}).get('monte_info') or result.get('monte_info')
     if monte:
+        p_call = monte.get('p_call')
+        if p_call is not None:
+            print(f"Call probability: {p_call:.2%}")
         print('Monte Carlo trigger info:')
         for k, v in monte.items():
-            print(f'  {k}: {v}')
+            if k != 'p_call':
+                print(f'  {k}: {v}')
 
 
 # Keep backward-compatible aliases so any code that called spire.get_day_count etc. still works.

@@ -3,8 +3,8 @@
 Prices structured notes where both coupons and redemption are scaled by a
 forward-projected inflation index ratio.  The common QuantLib utilities
 (curve building, schedule generation, z-spread discounting, inflation
-projection) are imported from models/helper.py, which is also the
-dependency used by spire.py.  Neither module depends on the other.
+projection) are imported from models/helper.py — the same shared layer
+used by the structured note pricers.  Neither module depends on the other.
 
 For plain-vanilla government linkers (TIPS, UK Gilts, OATi, BTP-i) use
 inflation_linked.py instead.
@@ -23,7 +23,7 @@ Required JSON fields
   accrual_day_count        Day count convention
   calendar                 TARGET | UnitedStates
   business_day_convention  ModifiedFollowing | Following | Unadjusted
-  collateral               Collateral bond object (same schema as spire.py)
+  collateral               Collateral bond object (same schema as models/helper.model_collateral_pv)
 
   index_linked_assumption  Object with:
     index_ratio_at_eval          Current index ratio at evaluation date
@@ -50,7 +50,7 @@ from .helper import (
     parse_date,
     get_day_count,
     load_json,
-    build_discount_curve,
+    build_discount_curve_and_dc,
     build_note_dates,
     discount_factor_with_issuer_spread,
     inflation_factor,
@@ -209,8 +209,8 @@ def price_asset(note_data, curve_json):
 
     note_curve_cfg,       note_curve_name       = select_note_curve(note_data, curve_json)
     collateral_curve_cfg, collateral_curve_name = select_collateral_curve(note_data, curve_json)
-    note_curve,       note_curve_day_count       = build_discount_curve(note_curve_cfg,       evaluation_date)
-    collateral_curve, collateral_curve_day_count = build_discount_curve(collateral_curve_cfg, evaluation_date)
+    note_curve,       note_curve_day_count       = build_discount_curve_and_dc(note_curve_cfg,       evaluation_date)
+    collateral_curve, collateral_curve_day_count = build_discount_curve_and_dc(collateral_curve_cfg, evaluation_date)
 
     note_notional = float(note_data.get('note_notional', 100_000_000.0))
     issue_price   = float(note_data.get('issue_price', 100.0))

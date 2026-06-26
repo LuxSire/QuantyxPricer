@@ -230,8 +230,9 @@ def price_noncallable_from_path(cashflows, eval_date, day_count, curve_handle, a
 
 
 def price_callable_from_path_lsm(cashflows, call_schedule, eval_date, day_count, curve_handle, a, sigma, path_times, path_rates):
+    """Return (npv, call_probability). call_probability is the fraction of paths where the issuer exercises the call."""
     if not call_schedule:
-        return price_noncallable_from_path(cashflows, eval_date, day_count, curve_handle, a, sigma, path_times, path_rates)
+        return price_noncallable_from_path(cashflows, eval_date, day_count, curve_handle, a, sigma, path_times, path_rates), 0.0
 
     payment_times = np.array([ql_date_to_time(day_count, eval_date, cf['pay_date']) for cf in cashflows], dtype=float)
     payment_amounts = np.array([cf['amount'] for cf in cashflows], dtype=float)
@@ -302,7 +303,7 @@ def price_callable_from_path_lsm(cashflows, call_schedule, eval_date, day_count,
                     rates_slice = np.append(rates_slice, path_rates[p, idx])
                 values[p] *= discount_factor_path(rates_slice, times_slice)
 
-    return float(values.mean())
+    return float(values.mean()), float(1.0 - alive.mean())
 
 
 def price_asset(bond_data, curve_json, issuer_spread_bp=None):
@@ -328,7 +329,7 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
 
     has_calls = len(call_schedule) > 0
     if has_calls:
-        npv = price_callable_from_path_lsm(
+        npv, call_probability = price_callable_from_path_lsm(
             cashflows, call_schedule, evaluation_date, accrual_day_count,
             spreaded_curve_handle, a, sigma, path_times, path_rates,
         )
@@ -341,6 +342,7 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
             for i in range(num_paths)
         ]
         npv = float(np.mean(pvs))
+        call_probability = None
 
     settlement_days = int(bond_data.get('settlement_days', 2))
     settlement_date = get_calendar(bond_data['calendar']).advance(evaluation_date, settlement_days, ql.Days)
@@ -366,6 +368,7 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
         'mc_num_paths': num_paths,
         'mc_seed': seed,
         'evaluation_date': evaluation_date.ISO(),
+        'call_probability': call_probability,
     }
 
 
@@ -378,6 +381,8 @@ def print_mc_result(bond_data, result):
     print(f"Monte Carlo time steps: {result['mc_time_steps']}")
     print(f"Monte Carlo paths: {result['mc_num_paths']}")
     print(f"Monte Carlo seed: {result['mc_seed']}")
+    if result.get('call_probability') is not None:
+        print(f"Call probability: {result['call_probability']:.2%}")
     print(f"NPV: {result['npv']:.4f}")
     print(f"Clean price: {result['clean_price']:.4f}")
     print(f"Dirty price: {result['dirty_price']:.4f}")

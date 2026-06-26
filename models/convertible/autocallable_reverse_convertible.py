@@ -142,6 +142,7 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
     barrier_indices = np.where((all_times >= barrier_start) & (all_times <= barrier_end))[0]
 
     redemption_pvs = []
+    n_called = 0
     for p in range(num_paths):
         # Check autocall dates in chronological order
         called = False
@@ -155,6 +156,7 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
                 break
 
         if called:
+            n_called += 1
             continue
 
         # Not called — apply barrier + worst-of at maturity
@@ -183,6 +185,7 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
     expected_redemption_pv = float(np.mean(redemption_pvs))
     npv = expected_redemption_pv + coupon_pv
     price_pct_val = npv / denomination * 100.0 if denomination > 0 else 0.0
+    autocall_probability = n_called / num_paths if num_paths > 0 else 0.0
 
     ul_summary = [
         {
@@ -211,6 +214,7 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
         'evaluation_date': evaluation_date.ISO(),
         'maturity_date': maturity_date.ISO(),
         'autocall_observations': len(autocall_obs),
+        'autocall_probability': autocall_probability,
         'underlyings': ul_summary,
         'barrier_level': barrier_0,
         'strike_level': strike_0,
@@ -230,6 +234,8 @@ def print_report(bond_data, result):
     print(f"Evaluation date: {result['evaluation_date']}")
     print(f"Maturity date: {result['maturity_date']}")
     print(f"Autocall observations: {result['autocall_observations']}")
+    if result.get('autocall_probability') is not None:
+        print(f"Autocall probability: {result['autocall_probability']:.2%}")
     print(f"Issuer spread: {result['issuer_spread_bp']:.2f} bp")
     for ul in result.get('underlyings', []):
         print(f"  Underlying: {ul.get('name')}  vol={ul.get('volatility'):.4f}  barrier={ul.get('barrier_level')}  strike={ul.get('strike_level')}  conv={ul.get('conversion_ratio')}")

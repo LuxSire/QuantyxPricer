@@ -270,6 +270,18 @@ def build_discount_curve(curve_json, evaluation_date):
     return curve
 
 
+def build_discount_curve_and_dc(curve_cfg, evaluation_date):
+    """Return (curve, day_count) for structured-note pricers.
+
+    Other models call build_discount_curve() and expect only the curve.
+    This wrapper returns both so spire.py and index_linked.py can share
+    the day-count without duplicating the lookup.
+    """
+    curve = build_discount_curve(curve_cfg, evaluation_date)
+    dc    = get_day_count(curve_cfg.get('day_count', 'Actual365Fixed'))
+    return curve, dc
+
+
 # ---------------------------------------------------------------------------
 # Structured-note shared utilities
 # (used by both spire.py and index_linked.py)

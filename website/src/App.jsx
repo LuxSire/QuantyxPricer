@@ -53,7 +53,7 @@ export default function App() {
   })
   const [settingsOpen, setSettingsOpen] = useState(() => window.location.hash === '#/settings')
   
-  const { rows, error, pricingAll, updatingCurves, pricing_single_asset, downloadPrice } = usePrices(apiBase)
+  const { rows, error, pricingAll, updatingCurves, pricing_single_asset, downloadPrice, downloadAndInsertPrices, downloadAndInsertAllPrices, downloadingAll } = usePrices(apiBase)
   const { fetchNopricedAssets, fetchUnderlyingAssets } = useAsset(apiBase)
 
   const createOnPriceAll = async () => {
@@ -276,7 +276,19 @@ export default function App() {
             />
           </div>
           <div style={{ marginTop: 24 }}>
-            <h2 style={{ marginBottom: 8 }}>Underlying Assets</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <h2 style={{ margin: 0 }}>Underlying Assets</h2>
+              <button
+                title="download and insert prices for all underlying assets"
+                disabled={downloadingAll}
+                onClick={async (e) => {
+                  e.preventDefault()
+                  await downloadAndInsertAllPrices(underlyingAssets, setSnack)
+                }}
+              >
+                {downloadingAll ? '⏳' : '⬇️ all'}
+              </button>
+            </div>
             <DataTable
               columns={[
                 { key: 'instrument_id', label: 'Instrument ID', className: 'mono' },
@@ -290,11 +302,11 @@ export default function App() {
                 const busy = instrumentId && pricingIds.includes(instrumentId)
                 return (
                   <button
-                    title="download prices"
+                    title="download and insert prices"
                     disabled={busy}
                     onClick={async (e) => {
                       e.preventDefault()
-                      await downloadPrice(instrumentId, setSnack)
+                      await downloadAndInsertPrices(instrumentId, setSnack)
                     }}
                   >
                     {busy ? '⏳' : '⬇️'}

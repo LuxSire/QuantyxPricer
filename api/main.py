@@ -1,3 +1,4 @@
+import re
 import sys
 import logging
 from pathlib import Path
@@ -63,6 +64,7 @@ app.add_middleware(
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ASSETS_DIR: Path = PROJECT_ROOT / 'assets'
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+FIELDS_DIR: Path = PROJECT_ROOT / 'models' / 'fields'
 TERMSHEETS_DIR: Path = PROJECT_ROOT / 'termsheets'
 TERMSHEETS_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR: Path = PROJECT_ROOT / 'output'
@@ -203,9 +205,93 @@ async def root():
 
 
 
+_KEYWORD_RULES = [
+    # Order matters: more-specific patterns must come before generic ones.
+    (r'spire',                                                'spire'),
+    (r'credit.?linked.?note|contract.?linked.?note|\bcln\b', 'cln'),
+    (r'barrier.?convertible',                                 'barrier_convertible'),
+    (r'inflation.?linked',                                    'inflation_linked'),
+    (r'index.?linked',                                        'index_linked'),
+    (r'pay.?in.?kind|\bpik\b',                               'pik'),
+    (r'\brepo\b|discount.?note|commercial.?paper|t-?bill',   'discount_note'),
+    (r'\bco.?co\b|\bat1\b|additional.?tier.?1|contingent.?convertible', 'at1'),
+    (r'asset.?backed|\babs\b|mortgage.?backed|\bmbs\b',      'abs'),
+    (r'\bclo\b|collaterali[sz]ed.?loan.?obligation',         'clo'),
+    (r'autocall|reverse.?convertible',                        'autocallable_reverse_convertible'),
+    (r'barrier.?discount|discount.?certificate',              'barrier_discount'),
+    (r'\bconvertible\b',                                      'simple_convertible'),
+    (r'trinomial',                                            'trinomialtree'),
+    (r'monte.?carlo',                                         'montecarlo'),
+    (r'\birs\b|interest.?rate.?swap',                        'irs'),
+    (r'\bcds\b|credit.?default.?swap',                       'cds'),
+    (r'\bcap\b|interest.?rate.?cap',                         'cap'),
+    (r'\bfloor\b|interest.?rate.?floor',                     'floor'),
+]
+_KEYWORD_RE = [(re.compile(pat, re.I), model) for pat, model in _KEYWORD_RULES]
+
+_TEXT_FIELDS = ('description', 'asset_type', 'bond_structure', 'instrument_type',
+                'typology', 'coupon_structure', 'seniority', 'name')
+
+
+def _infer_model(payload: dict) -> str:
+    """Score each model schema against the payload and return the best-fit model name.
+
+    First pass: keyword scan over text fields — returns immediately on a match.
+    Second pass: required + optional field-coverage scoring with tiebreakers.
+    """
+    # --- keyword scan ---
+    text = ' '.join(str(payload.get(f, '')) for f in _TEXT_FIELDS).lower()
+    for regex, model in _KEYWORD_RE:
+        if regex.search(text):
+            return model
+
+    _UNIVERSAL = {'instrument_id', 'evaluation_date', 'description', 'issue_date',
+                  'maturity_date', 'calendar', 'currency', 'isin'}
+
+    payload_keys = set(payload.keys())
+    best_model = 'hullwhite'
+    best_score = -1.0
+
+    for schema_path in sorted(FIELDS_DIR.glob('*.json')):
+        model_name = schema_path.stem
+        try:
+            schema = json.loads(schema_path.read_text())
+        except Exception:
+            continue
+
+        required = [f['name'] for f in schema.get('required_fields', []) if f['name'] not in _UNIVERSAL]
+        optional = [f['name'] for f in schema.get('optional_fields', [])]
+
+        req_score = sum(1 for f in required if f in payload_keys) / max(len(required), 1)
+        opt_score = sum(1 for f in optional if f in payload_keys) / max(len(optional), 1)
+        score = req_score + 0.3 * opt_score
+
+        # Value bonus: coupon_structure == 'index_linked' is the definitive marker
+        if model_name == 'index_linked' and payload.get('coupon_structure') == 'index_linked':
+            score += 0.5
+
+        if score > best_score:
+            best_score = score
+            best_model = model_name
+
+    # Tiebreak: hullwhite / trinomialtree / montecarlo share identical required fields
+    if best_model in ('hullwhite', 'trinomialtree', 'montecarlo'):
+        if 'tree_time_steps' in payload_keys:
+            return 'trinomialtree'
+        if any(k in payload_keys for k in ('mc_time_steps', 'mc_num_paths', 'mc_seed')):
+            return 'montecarlo'
+        return 'hullwhite'
+
+    return best_model
+
+
 async def _save_asset_data(payload: dict) -> dict:
     """Normalize dates, write asset JSON to ASSETS_DIR, and insert into MySQL."""
     asset = payload
+
+    if not asset.get('model'):
+        asset['model'] = _infer_model(asset)
+        print(f"[API] model not set — inferred: {asset['model']}")
 
     def try_parse_date(val: Any):
         if not isinstance(val, str):
@@ -250,6 +336,11 @@ async def _save_asset_data(payload: dict) -> dict:
         print(f"[API] Inserted asset into MySQL with id={row_id}")
     except Exception as e:
         print(f"[API] Warning: could not insert asset into MySQL: {e}")
+
+    try:
+        assets[instrument_id] = Asset.from_dict(asset) if hasattr(Asset, 'from_dict') else Asset(**asset)
+    except Exception as upd_err:
+        logging.warning(f'[API] Could not update in-memory assets after save: {upd_err}')
 
     return {"saved": filename, "path": str(path)}
 
@@ -672,6 +763,12 @@ async def insert_prices(request: Request, payload: Any = None):
                     print(f"[API] Item {i}: instrument_id={item.get('instrument_id')}, provider={item.get('provider')}")
         
         row_id = db.insert_prices(payload)
+        try:
+            new_p = Prices.from_data(payload if isinstance(payload, list) else [payload])
+            for iid, price in new_p.items():
+                prices[iid] = price
+        except Exception as upd_err:
+            logging.warning(f'[API] Could not update in-memory prices after insert: {upd_err}')
         return {'inserted_id': row_id}
     except Exception as e:
         print(f"[API] Error inserting prices: {e}")

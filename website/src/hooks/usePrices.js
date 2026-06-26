@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 export function usePrices(apiBase) {
   const [pricingAll, setPricingAll] = useState(false)
   const [updatingCurves, setUpdatingCurves] = useState(false)
+  const [downloadingAll, setDownloadingAll] = useState(false)
   const [rows, setRows] = useState(null)
   const [error, setError] = useState(null)
 
@@ -183,6 +184,31 @@ export function usePrices(apiBase) {
     }
   }
 
+  const downloadAndInsertPrices = async (instrumentId, setSnack) => {
+    const downloaded = await downloadPrice(instrumentId, setSnack)
+    if (!downloaded) return null
+    const payload = downloaded.provider_result || downloaded
+    return await insertPrices(payload, setSnack)
+  }
+
+  const downloadAndInsertAllPrices = async (assets, setSnack) => {
+    if (downloadingAll || !assets || assets.length === 0) return
+    setDownloadingAll(true)
+    if (setSnack) setSnack({ visible: true, message: `Downloading prices for ${assets.length} underlying(s)...`, type: 'info' })
+    let ok = 0
+    let fail = 0
+    for (const asset of assets) {
+      const result = await downloadAndInsertPrices(asset.instrument_id, null)
+      if (result) ok++; else fail++
+    }
+    setDownloadingAll(false)
+    if (setSnack) setSnack({
+      visible: true,
+      message: `Done: ${ok} inserted, ${fail} failed`,
+      type: fail === 0 ? 'success' : 'error',
+    })
+  }
+
   const insertPrices = async (payload, setSnack) => {
     const endpoint = (apiBase ? `${apiBase}` : '') + '/insert_prices'
     try {
@@ -270,6 +296,9 @@ export function usePrices(apiBase) {
     onUpdateCurves,
     downloadPrice,
     downloadAllPrices,
+    downloadAndInsertPrices,
+    downloadAndInsertAllPrices,
+    downloadingAll,
     insertPrices,
     pricing_single_asset,
     fetchAssetTimeSeries,

@@ -8,6 +8,7 @@ from classes import Asset
 
 from models import hullwhite, index_linked, inflation_linked, montecarlo, spire, trinomialtree, cln, helper,at1
 from models.convertible import barrier_convertible, barrier_discount, simple_convertible, autocallable_reverse_convertible
+from models.swaps import irs, cds, cap, floor
 try:
     from reporting import pdf_report, json_report
 except ModuleNotFoundError:
@@ -210,6 +211,26 @@ _MODELS: dict[str, _ModelSpec] = {
         print_fn=lambda d, r, cj: simple_convertible.print_result(d, r),
         model_key='simple_convertible',
         prep=_prep_simple_convertible,
+    ),
+    'irs': _ModelSpec(
+        price_fn=lambda d, cj, a: irs.price_asset(d, cj),
+        print_fn=lambda d, r, cj: irs.print_result(d, r),
+        model_key='irs',
+    ),
+    'cds': _ModelSpec(
+        price_fn=lambda d, cj, a: cds.price_asset(d, cj),
+        print_fn=lambda d, r, cj: cds.print_result(d, r),
+        model_key='cds',
+    ),
+    'cap': _ModelSpec(
+        price_fn=lambda d, cj, a: cap.price_asset(d, cj),
+        print_fn=lambda d, r, cj: cap.print_result(d, r),
+        model_key='cap',
+    ),
+    'floor': _ModelSpec(
+        price_fn=lambda d, cj, a: floor.price_asset(d, cj),
+        print_fn=lambda d, r, cj: floor.print_result(d, r),
+        model_key='floor',
     ),
 }
 

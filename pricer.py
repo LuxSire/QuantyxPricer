@@ -14,7 +14,8 @@ try:
 except ModuleNotFoundError:
     import reporting.pdf_report as pdf_report
     import reporting.json_report as json_report
-from scripts import update_curves
+from scripts.update_ecb import update_swap_curves_ecb
+from scripts.update_fed import update_swap_curves_fed
 
 sys.path.insert(0, str(Path(__file__).parent / 'scripts'))
 
@@ -389,7 +390,8 @@ def main():
     run_all_requested = args.all_bonds or str(bond_selector).strip().lower() == 'all'
 
     if run_all_requested:
-        update_curves(verbose=True)
+        update_swap_curves_ecb(verbose=True)
+        update_swap_curves_fed(verbose=True)
         run_all_bonds(curve_json, args)
         return
 

@@ -100,7 +100,9 @@ def _build_schedule(bond_data):
     gen = _DATE_GEN.get(bond_data.get('date_generation', 'Backward'), ql.DateGeneration.Backward)
 
     first_coupon = bond_data.get('first_coupon_date')
-    first_coupon_date = parse_date(first_coupon) if first_coupon else ql.Date()
+    _first_coupon_parsed = parse_date(first_coupon) if first_coupon else ql.Date()
+    # Discard if on or before issue_date — QuantLib requires it to be strictly after
+    first_coupon_date = _first_coupon_parsed if (first_coupon and _first_coupon_parsed > issue_date) else ql.Date()
 
     return ql.Schedule(
         issue_date,
@@ -129,13 +131,32 @@ def _index_ratio(bond_data, target_date, eval_date, day_count):
     forward projection needed, we may be discounting past coupons which
     are already known — but those are filtered out before calling this).
     """
-    base_cpi = float(bond_data['base_cpi'])
-    current_cpi = float(bond_data['current_cpi'])
-    if base_cpi <= 0:
-        raise ValueError('base_cpi must be positive')
-    current_index_ratio = current_cpi / base_cpi
+    if 'base_cpi' in bond_data and 'current_cpi' in bond_data:
+        base_cpi = float(bond_data['base_cpi'])
+        current_cpi = float(bond_data['current_cpi'])
+        if base_cpi <= 0:
+            raise ValueError('base_cpi must be positive')
+        current_index_ratio = current_cpi / base_cpi
+    else:
+        # Fallback: index_linked_assumption or collateral.inflation_assumption style
+        assump = (
+            bond_data.get('index_linked_assumption') or
+            bond_data.get('collateral', {}).get('inflation_assumption') or {}
+        )
+        current_index_ratio = float(assump.get('index_ratio_at_eval', bond_data.get('index_ratio_at_eval', 1.0)))
 
-    annual_inflation = normalize_rate(bond_data.get('annual_inflation_rate', 0.0))
+    # annual_inflation_rate: top-level wins, then index_linked_assumption
+    assump_fallback = (
+        bond_data.get('index_linked_assumption') or
+        bond_data.get('collateral', {}).get('inflation_assumption') or {}
+    )
+    raw_rate = (
+        bond_data.get('annual_inflation_rate') or
+        assump_fallback.get('annual_index_growth_rate') or
+        assump_fallback.get('annual_inflation_rate') or
+        0.0
+    )
+    annual_inflation = normalize_rate(raw_rate)
     t = day_count.yearFraction(eval_date, target_date)
     if t <= 0:
         return current_index_ratio
@@ -163,7 +184,21 @@ def _accrued_coupon(bond_data, schedule, eval_date, settlement_date, day_count, 
 # Core pricer
 # ---------------------------------------------------------------------------
 
-def price_asset(bond_data, curve_json, issuer_spread_bp=None):
+def price_sensitivity(bond_data, curve_json, n_steps=2, step_pct=0.10):
+    base = normalize_rate(bond_data.get('annual_inflation_rate', 0.0))
+    if base == 0.0:
+        return []
+    multipliers = [1.0 + (i - n_steps) * step_pct for i in range(2 * n_steps + 1)]
+    sensitivity = []
+    for m in multipliers:
+        level = round(base * m, 8)
+        d = {**bond_data, 'annual_inflation_rate': level}
+        r = price_asset(d, curve_json, _skip_sensitivity=True)
+        sensitivity.append({'spread_bp': round(level * 100, 6), 'pv_note_pct': r['price_pct']['pv_note']})
+    return sensitivity
+
+
+def price_asset(bond_data, curve_json, issuer_spread_bp=None, _skip_sensitivity=False):
     evaluation_date = parse_date(bond_data.get('evaluation_date', today_date_string()))
     ql.Settings.instance().evaluationDate = evaluation_date
 
@@ -175,7 +210,17 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
         issuer_spread_bp = float(bond_data.get('issuer_spread_bp', bond_data.get('credit_spread_bp', 0.0)))
 
     par = float(bond_data.get('par', 100.0))
-    real_coupon_rate = normalize_rate(bond_data.get('real_coupon_rate', 0.0))
+    # real_coupon_rate: top-level wins, then fixed_coupon_rate, then index_linked_assumption.coupon_multiplier
+    _assump = (
+        bond_data.get('index_linked_assumption') or
+        bond_data.get('collateral', {}).get('inflation_assumption') or {}
+    )
+    real_coupon_rate = normalize_rate(
+        bond_data.get('real_coupon_rate') or
+        bond_data.get('fixed_coupon_rate') or
+        _assump.get('coupon_multiplier') or
+        0.0
+    )
     redemption_floor = bool(bond_data.get('redemption_floor', True))
     settlement_days = int(bond_data.get('settlement_days', 2))
 
@@ -249,7 +294,7 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
         r_nominal = normalize_rate(float(nominal_yield))
         breakeven_inflation = (1.0 + r_nominal) / (1.0 + real_ytm) - 1.0
 
-    return {
+    result = {
         'selected_npv': npv,
         'npv': npv,
         'npv_to_maturity': npv,
@@ -276,6 +321,9 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
             'clean_price': clean_price / par * 100.0,
         },
     }
+    if not _skip_sensitivity:
+        result['sensitivity'] = price_sensitivity(bond_data, curve_json)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +391,11 @@ def print_result(bond_data, result):
         print(f"Real YTM:                     {result['real_ytm'] * 100:.6f}%")
     if result['breakeven_inflation'] is not None:
         print(f"Breakeven inflation:          {result['breakeven_inflation'] * 100:.6f}%")
+    if result.get('sensitivity'):
+        print('Inflation rate sensitivity:')
+        print(f"  {'Rate%':>10}  {'PV(Note)%':>12}")
+        for s in result['sensitivity']:
+            print(f"  {s['spread_bp']:>10.4f}  {s['pv_note_pct']:>12.6f}")
     print('Cashflows:')
     for cf in result['cashflows']:
         print(f"  {cf['date']}  {cf['type']:10s}  IR={cf['index_ratio']:.4f}  amount={cf['amount']:.4f}  pv={cf['pv']:.4f}")

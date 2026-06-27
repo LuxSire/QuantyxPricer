@@ -1,30 +1,34 @@
 import React, { useState, useCallback } from 'react'
 import { useAsset } from './hooks/useAsset'
+import FileUploaderDialog from './components/FileUploaderDialog'
 
 export default function Sidebar({
   models = [],
   currencies = [],
+  issuers = [],
   filterInstrument,
   setFilterInstrument,
   filterModel,
   setFilterModel,
   filterCurrency,
   setFilterCurrency,
+  filterIssuer,
+  setFilterIssuer,
   clearAll,
   onPriceAll,
   pricingAll,
   onUpdateCurves,
   updatingCurves,
   apiBase,
+  onAssetSaved,
 }) {
   const [showUploader, setShowUploader] = useState(false)
-  const [uploadMode, setUploadMode] = useState('json')
   const [showLookup, setShowLookup] = useState(false)
   const [lookupCode, setLookupCode] = useState('')
   const [lookupResult, setLookupResult] = useState(null)
   const [lookupError, setLookupError] = useState('')
   const [lookupLoading, setLookupLoading] = useState(false)
-  const { loading: uploading, error: uploadError, uploadJson, uploadTermsheet, fetchAsset } = useAsset(apiBase)
+  const { fetchAsset } = useAsset(apiBase)
 
   const runLookup = useCallback(async () => {
     const query = String(lookupCode || '').trim()
@@ -100,6 +104,14 @@ export default function Sidebar({
         </select>
       </div>
 
+      <div className="filter-group">
+        <label>Issuer</label>
+        <select value={filterIssuer} onChange={(e) => setFilterIssuer(e.target.value)}>
+          <option value="">(all)</option>
+          {issuers.map((s, i) => <option key={i} value={s}>{s}</option>)}
+        </select>
+      </div>
+
       <div style={{ marginTop: 12 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="clear-btn" onClick={() => setShowLookup(true)} title="Lookup asset">🔍 Lookup</button>
@@ -151,61 +163,11 @@ export default function Sidebar({
           </div>
         )}
         {showUploader && (
-          <div className="uploader-backdrop" onClick={() => setShowUploader(false)}>
-            <div className="uploader-modal" onClick={(e) => e.stopPropagation()}>
-              <h3>Upload Asset</h3>
-              <div style={{ marginBottom: 10, display: 'flex', gap: 14 }}>
-                <label>
-                  <input
-                    type="radio"
-                    name="upload-mode"
-                    value="json"
-                    checked={uploadMode === 'json'}
-                    onChange={() => setUploadMode('json')}
-                  />{' '}
-                  JSON
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name="upload-mode"
-                    value="termsheet"
-                    checked={uploadMode === 'termsheet'}
-                    onChange={() => setUploadMode('termsheet')}
-                  />{' '}
-                  Termsheet (PDF)
-                </label>
-              </div>
-              <input
-                type="file"
-                accept={uploadMode === 'termsheet' ? '.pdf' : '.json'}
-                onChange={(e) => {
-                  const f = e.target.files?.[0]
-                  if (!f) return
-                  if (uploadMode === 'termsheet') {
-                    uploadTermsheet(f)
-                      .then(() => {
-                        console.log('Termsheet uploaded')
-                        setShowUploader(false)
-                      })
-                      .catch(() => {})
-                  } else {
-                    f.text()
-                      .then((txt) => JSON.parse(txt))
-                      .then((obj) => uploadJson(obj))
-                      .then(() => {
-                        console.log('JSON uploaded')
-                        setShowUploader(false)
-                      })
-                      .catch((err) => console.error(err))
-                  }
-                }}
-              />
-              {uploadError && <div style={{ color: '#dc2626', marginTop: 8 }}>{uploadError}</div>}
-              {uploading && <div style={{ color: '#0891b2', marginTop: 8 }}>Uploading...</div>}
-              <button onClick={() => setShowUploader(false)} style={{ marginTop: 12 }}>Close</button>
-            </div>
-          </div>
+          <FileUploaderDialog
+            apiBase={apiBase}
+            onClose={() => setShowUploader(false)}
+            onAssetSaved={onAssetSaved}
+          />
         )}
       </div>
 

@@ -76,6 +76,27 @@ CURVE_FILE = CURVES_DIR / 'swap_curves.json'
 BOND_FILE = ASSETS_DIR / 'CH1493992296.json'
 
 
+def _scaled_bond_data(bond_data, multiplier):
+    d = dict(bond_data)
+    if d.get('underlyings'):
+        d['underlyings'] = [
+            {**ul, 'initial_fixing_level': float(ul.get('initial_fixing_level', 0.0)) * multiplier}
+            for ul in d['underlyings']
+        ]
+    if d.get('underlying') and float((d.get('underlying') or {}).get('initial_fixing_level', 0.0)) > 0:
+        d['underlying'] = {**d['underlying'], 'initial_fixing_level': float(d['underlying']['initial_fixing_level']) * multiplier}
+    return d
+
+
+def price_sensitivity(bond_data, curve_json, n_steps=2, step_pct=0.10):
+    multipliers = [1.0 + (i - n_steps) * step_pct for i in range(2 * n_steps + 1)]
+    sensitivity = []
+    for m in multipliers:
+        r = price_asset(_scaled_bond_data(bond_data, m), curve_json, _skip_sensitivity=True)
+        sensitivity.append({'spread_bp': round(m * 100, 1), 'pv_note_pct': r['price_pct']['pv_note']})
+    return sensitivity
+
+
 def get_barrier_range(bond_data, evaluation_date, maturity_date):
     period = bond_data.get('barrier_observation_period', {})
     if not period:
@@ -88,7 +109,7 @@ def get_barrier_range(bond_data, evaluation_date, maturity_date):
     return start_time, end_time
 
 
-def price_asset(bond_data, curve_json, issuer_spread_bp=None):
+def price_asset(bond_data, curve_json, issuer_spread_bp=None, _skip_sensitivity=False):
     evaluation_date = parse_date(bond_data.get('evaluation_date', today_date_string()))
     ql.Settings.instance().evaluationDate = evaluation_date
 
@@ -173,7 +194,7 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
 
     _, s0_0, barrier_0, strike_0, conv_0, _, _ = ul_paths[0]
 
-    return {
+    result = {
         'selected_npv': npv,
         'npv': npv,
         'clean_price': npv - accrued_amount,
@@ -197,6 +218,9 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
         'npv_to_worst_call': npv,
         'npv_to_maturity': npv,
     }
+    if not _skip_sensitivity:
+        result['sensitivity'] = price_sensitivity(bond_data, curve_json)
+    return result
 
 
 def print_result(bond_data, result):
@@ -213,6 +237,11 @@ def print_result(bond_data, result):
     print(f"Clean price: {result['clean_price']:.4f}")
     print(f"Dirty price: {result['dirty_price']:.4f}")
     print(f"Accrued amount: {result['accrued_amount']:.4f}")
+    if result.get('sensitivity'):
+        print('Equity path sensitivity (% of initial fixing → PV%):')
+        print(f"  {'Level%':>8}  {'PV(Note)%':>12}")
+        for s in result['sensitivity']:
+            print(f"  {s['spread_bp']:>8.1f}  {s['pv_note_pct']:>12.6f}")
     print()
 
 

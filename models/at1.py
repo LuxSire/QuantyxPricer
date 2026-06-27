@@ -314,7 +314,18 @@ def _solve_ytc(cashflows, eval_date, npv, low=-0.5, high=2.0, tol=1e-9, max_iter
 # Core pricer
 # ---------------------------------------------------------------------------
 
-def price_asset(bond_data, curve_json, issuer_spread_bp=None):
+def price_sensitivity(bond_data, curve_json, n_steps=2, step_pct=0.10):
+    base = float(bond_data.get('issuer_spread_bp', bond_data.get('credit_spread_bp', 0.0)))
+    multipliers = [1.0 + (i - n_steps) * step_pct for i in range(2 * n_steps + 1)]
+    sensitivity = []
+    for m in multipliers:
+        level = round(base * m, 6)
+        r = price_asset(bond_data, curve_json, issuer_spread_bp=level, _skip_sensitivity=True)
+        sensitivity.append({'spread_bp': level, 'pv_note_pct': r['price_pct']['pv_note']})
+    return sensitivity
+
+
+def price_asset(bond_data, curve_json, issuer_spread_bp=None, _skip_sensitivity=False):
     evaluation_date = parse_date(bond_data.get('evaluation_date', today_date_string()))
     ql.Settings.instance().evaluationDate = evaluation_date
 
@@ -384,7 +395,7 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
     price_convention = str(bond_data.get('price_convention', 'to_first_call')).lower()
     selected_npv = npv_to_perpetuity if price_convention == 'to_perpetuity' else npv_to_call
 
-    return {
+    result = {
         'selected_npv':          selected_npv,
         'npv_to_first_call':     npv_to_call,
         'npv_to_perpetuity':     npv_to_perpetuity,
@@ -416,6 +427,9 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
             'clean_price':           clean_price / par * 100.0,
         },
     }
+    if not _skip_sensitivity:
+        result['sensitivity'] = price_sensitivity(bond_data, curve_json)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -455,6 +469,13 @@ def print_report(bond_data, result):
         print(f"CET1 current:          {result['cet1_current_pct']:.3f}%")
     if result['distance_to_trigger'] is not None:
         print(f"Distance to trigger:   {result['distance_to_trigger']:.3f}pp")
+    sensitivity = result.get('sensitivity')
+    if sensitivity:
+        base_bp = float(bond_data.get('issuer_spread_bp', bond_data.get('credit_spread_bp', 0.0)))
+        print('Sensitivity (price %):')
+        for s in sensitivity:
+            marker = ' ◀' if abs(s['spread_bp'] - base_bp) < 0.01 else ''
+            print(f"  {s['spread_bp']:>8.2f} bp  →  {s['pv_note_pct']:.6f}%{marker}")
     print()
 
 

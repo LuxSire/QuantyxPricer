@@ -204,7 +204,26 @@ def price_note(note_data, curve, curve_day_count):
     }
 
 
-def price_asset(note_data, curve_json):
+def price_sensitivity(note_data, curve_json, n_steps=2, step_pct=0.10):
+    base = get_index_assumption(note_data)['annual_inflation_rate']
+    if base == 0.0:
+        return []
+    multipliers = [1.0 + (i - n_steps) * step_pct for i in range(2 * n_steps + 1)]
+    orig_assumption = dict(
+        note_data.get('index_linked_assumption') or
+        note_data.get('collateral', {}).get('inflation_assumption', {}) or {}
+    )
+    sensitivity = []
+    for m in multipliers:
+        level = round(base * m, 8)
+        overridden = {**orig_assumption, 'annual_index_growth_rate': level}
+        d = {**note_data, 'index_linked_assumption': overridden}
+        r = price_asset(d, curve_json, _skip_sensitivity=True)
+        sensitivity.append({'spread_bp': round(level * 100, 6), 'pv_note_pct': r['price_pct']['pv_note']})
+    return sensitivity
+
+
+def price_asset(note_data, curve_json, _skip_sensitivity=False):
     evaluation_date = parse_date(note_data['evaluation_date'])
 
     note_curve_cfg,       note_curve_name       = select_note_curve(note_data, curve_json)
@@ -241,7 +260,7 @@ def price_asset(note_data, curve_json):
     s   = 100.0 / note_notional
     ytm = _solve_ytm(note_leg['cashflows'], evaluation_date, lhs)
 
-    return {
+    result = {
         'evaluation_date':              evaluation_date.ISO(),
         'note_discount_curve_name':     note_curve_name,
         'collateral_discount_curve_name': collateral_curve_name,
@@ -282,6 +301,9 @@ def price_asset(note_data, curve_json):
         'collateral_leg': collateral_leg,
         'swap_mode':     swap_mode,
     }
+    if not _skip_sensitivity:
+        result['sensitivity'] = price_sensitivity(note_data, curve_json)
+    return result
 
 
 def print_report(note_data, result):
@@ -315,6 +337,11 @@ def print_report(note_data, result):
     print(f"Check LHS PV(Note) %: {pct['identity_lhs_pv_note']:.6f}")
     print(f"Check RHS Collateral+Swap-Adjustments %: {pct['identity_rhs_reconstructed']:.6f}")
     print(f"Identity error %: {pct['identity_error']:.8f}")
+    if result.get('sensitivity'):
+        print('Index growth rate sensitivity:')
+        print(f"  {'Rate%':>10}  {'PV(Note)%':>12}")
+        for s in result['sensitivity']:
+            print(f"  {s['spread_bp']:>10.4f}  {s['pv_note_pct']:>12.6f}")
 
 
 # Keep public alias so pricer.py can call index_linked.print_result

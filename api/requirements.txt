@@ -1,9 +1,23 @@
 fastapi
 uvicorn
+bcrypt
+azure-storage-blob
 pydantic
 python-dateutil
 mysql-connector-python
 python-dotenv
 requests
 numpy
+beautifulsoup4
+lxml
+
+# AI / RAG
+langchain
+langchain-text-splitters
+langchain-anthropic
+langchain-openai
+langchain-community
+faiss-cpu
+pypdf
+sentence-transformers
 

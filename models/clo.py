@@ -400,7 +400,18 @@ def _price_leveraged_loan(bond_data, curve, evaluation_date, calendar):
 # Core pricer
 # ---------------------------------------------------------------------------
 
-def price_asset(bond_data, curve_json, issuer_spread_bp=None):
+def price_sensitivity(bond_data, curve_json, n_steps=2, step_pct=0.10):
+    base = float(bond_data.get('issuer_spread_bp', bond_data.get('credit_spread_bp', 0.0)))
+    multipliers = [1.0 + (i - n_steps) * step_pct for i in range(2 * n_steps + 1)]
+    sensitivity = []
+    for m in multipliers:
+        level = round(base * m, 6)
+        r = price_asset(bond_data, curve_json, issuer_spread_bp=level, _skip_sensitivity=True)
+        sensitivity.append({'spread_bp': level, 'pv_note_pct': r['price_pct']['pv_note']})
+    return sensitivity
+
+
+def price_asset(bond_data, curve_json, issuer_spread_bp=None, _skip_sensitivity=False):
     evaluation_date = parse_date(bond_data.get('evaluation_date', today_date_string()))
     ql.Settings.instance().evaluationDate = evaluation_date
 
@@ -500,6 +511,8 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
         result['tranche_balance']  = face
         result['oc_test_failures'] = oc_failures
 
+    if not _skip_sensitivity:
+        result['sensitivity'] = price_sensitivity(bond_data, curve_json)
     return result
 
 
@@ -577,6 +590,13 @@ def _print_clo(bond_data, result):
     print(f"Principal returned:    {result['total_principal_returned']:,.2f}")
     if result.get('oc_test_failures'):
         print(f"OC test failures:      {result['oc_test_failures']} period(s)")
+    sensitivity = result.get('sensitivity')
+    if sensitivity:
+        base_bp = float(bond_data.get('issuer_spread_bp', bond_data.get('credit_spread_bp', 0.0)))
+        print('Sensitivity (NPV %):')
+        for s in sensitivity:
+            marker = ' ◀' if abs(s['spread_bp'] - base_bp) < 0.01 else ''
+            print(f"  {s['spread_bp']:>8.2f} bp  →  {s['pv_note_pct']:.6f}%{marker}")
     print()
     print('Period detail:')
     for cf in result['cashflows']:

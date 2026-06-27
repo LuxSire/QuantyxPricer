@@ -565,7 +565,7 @@ def price_to_call_date(curve, bond_data, call_date, schedule, cms_context=None):
     eval_date = ql.Settings.instance().evaluationDate
     day_count = get_day_count(bond_data['accrual_day_count'])
     par = bond_data['par']
-    spread_bp = bond_data['credit_spread_bp']
+    spread_bp = float(bond_data.get('credit_spread_bp') or bond_data.get('issuer_spread_bp') or 0.0)
     spread = spread_bp / 10000.0
 
     pv = 0.0
@@ -726,7 +726,7 @@ def _price_with_curve(curve, asset, curve_json=None, discount_curve_name=None):
 
     schedule, maturity_date = build_coupon_schedule(bond_data)
     eval_date = ql.Settings.instance().evaluationDate
-    spread_bp = bond_data['credit_spread_bp']
+    spread_bp = float(bond_data.get('credit_spread_bp') or bond_data.get('issuer_spread_bp') or 0.0)
     cms_context = None
     if curve_json is not None:
         cms_context = build_cms_context(curve_json, bond_data, eval_date, curve)
@@ -787,10 +787,7 @@ def _price_with_curve(curve, asset, curve_json=None, discount_curve_name=None):
     )
 
     # Select which NPV concept to report for callable structures.
-    if 'valuation_mode' in bond_data:
-        valuation_mode = bond_data['valuation_mode']
-    else:
-        valuation_mode = 'to_maturity'
+    valuation_mode = bond_data.get('valuation_mode') or 'to_maturity'
 
     if valuation_mode == 'worst_call':
         selected = worst
@@ -819,13 +816,31 @@ def _price_with_curve(curve, asset, curve_json=None, discount_curve_name=None):
     }
 
 
-def price_asset(bond_data, curve_json, discount_curve_name=None):
+def price_sensitivity(bond_data, curve_json, n_steps=2, step_pct=0.10):
+    base_spread = float(bond_data.get('credit_spread_bp') or bond_data.get('issuer_spread_bp') or 0.0)
+    multipliers = [1.0 + (i - n_steps) * step_pct for i in range(2 * n_steps + 1)]
+    sensitivity = []
+    for m in multipliers:
+        level = round(base_spread * m, 6)
+        d = {**bond_data, 'credit_spread_bp': level}
+        r = price_asset(d, curve_json, _skip_sensitivity=True)
+        sensitivity.append({
+            'spread_bp': level,
+            'pv_note_pct': amount_to_pct(r['selected_npv'], bond_data),
+        })
+    return sensitivity
+
+
+def price_asset(bond_data, curve_json, discount_curve_name=None, _skip_sensitivity=False):
     evaluation_date = parse_date(bond_data['evaluation_date'])
     discount_curve_cfg = select_discount_curve_config(curve_json, bond_data)
     curve = build_discount_curve(discount_curve_cfg, evaluation_date)
     if discount_curve_name is None:
         discount_curve_name = discount_curve_cfg.get('curve_name')
-    return _price_with_curve(curve, bond_data, curve_json=curve_json, discount_curve_name=discount_curve_name)
+    result = _price_with_curve(curve, bond_data, curve_json=curve_json, discount_curve_name=discount_curve_name)
+    if not _skip_sensitivity:
+        result['sensitivity'] = price_sensitivity(bond_data, curve_json)
+    return result
 
 
 def price_bond(curve, bond_data, curve_json=None, discount_curve_name=None):
@@ -919,7 +934,7 @@ def print_report(bond_data, result, curve=None, curve_json=None):
     if model_ytm_to_maturity is not None:
         print(f"Model YTM (to maturity): {model_ytm_to_maturity * 100.0:.6f}%")
     print(f"Redemption PV (%): {redemption_pct:.6f}")
-    print(f"Spread: {result['spread_bp']:.1f} bp")
+    print(f"Spread: {float(result['spread_bp'] or 0):.1f} bp")
     hw_params = result.get('hw_parameters', {})
     if hw_params:
         print(
@@ -975,6 +990,14 @@ def print_report(bond_data, result, curve=None, curve_json=None):
         for scenario in result['scenarios']:
             scenario_pct = amount_to_pct(scenario['npv'], bond_data)
             print(f"  {scenario['call_date']}: {scenario_pct:.6f}%")
+
+    sensitivity = result.get('sensitivity')
+    if sensitivity:
+        base_spread = float(bond_data.get('credit_spread_bp') or bond_data.get('issuer_spread_bp') or 0.0)
+        print('Spread sensitivity (PV %):')
+        for s in sensitivity:
+            marker = ' ◀' if abs(s['spread_bp'] - base_spread) < 0.01 else ''
+            print(f"  {s['spread_bp']:>8.2f} bp  →  {s['pv_note_pct']:.6f}%{marker}")
     print()
 
 

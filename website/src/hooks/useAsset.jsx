@@ -275,6 +275,26 @@ export function useAsset(apiBase = '') {
     }
   }, [apiBase])
 
+  const fetchWebSources = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBase}/web_sources`)
+      if (!res.ok) return {}
+      return await res.json()
+    } catch {
+      return {}
+    }
+  }, [apiBase])
+
+  const fetchAllAssets = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBase}/fetch_assets`)
+      if (!res.ok) return []
+      return await res.json()
+    } catch {
+      return []
+    }
+  }, [apiBase])
+
   return {
     loading,
     error,
@@ -287,5 +307,7 @@ export function useAsset(apiBase = '') {
     fetchAssetFields,
     updateModel,
     updateAsset,
+    fetchWebSources,
+    fetchAllAssets,
   }
 }

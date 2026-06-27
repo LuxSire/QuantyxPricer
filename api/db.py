@@ -255,6 +255,40 @@ def update_model(name: str, required_fields: list, optional_fields: list) -> Non
         conn.close()
 
 
+def select_users() -> list[Dict[str, Any]]:
+    """Return all rows from the user table."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT email, firstname, lastname, password FROM `user`')
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+        return rows
+    finally:
+        conn.close()
+
+
+def insert_user(email: str, firstname: str, lastname: str, password_hash: str) -> int:
+    """Insert a new user row. Returns the new my_row_id."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                'INSERT INTO `user` (email, firstname, lastname, password) VALUES (%s, %s, %s, %s)',
+                (email, firstname, lastname, password_hash),
+            )
+            conn.commit()
+            row_id = cursor.lastrowid
+        finally:
+            cursor.close()
+        return int(row_id)
+    finally:
+        conn.close()
+
+
 def insert_prices_from_file(file_path: Union[str, Path]) -> int:
     """Load JSON price data from a file and call insert_prices."""
     path = Path(file_path)

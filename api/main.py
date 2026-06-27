@@ -1,5 +1,7 @@
+import os
 import re
 import sys
+import requests
 import logging
 from pathlib import Path
 
@@ -23,12 +25,20 @@ import threading
 import uuid
 import tempfile
 from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
-from classes import  Prices, Asset, Assets,TS_Dict
+from classes import  Prices, Price, Asset, Assets,TS_Dict
+import bcrypt
 from models import helper
 import db
 import provider
 import pricer
 from pydantic import BaseModel
+
+WEB_SOURCES: dict = {
+    'borsa_italiana_mot': 'https://www.borsaitaliana.it/borsa/obbligazioni/mot/obbligazioni-in-euro/scheda/{isin}-MOTX.html?lang=it',
+    'borsa_italiana_extramot': 'https://www.borsaitaliana.it/borsa/obbligazioni/extramot/scheda/{isin}.html?lang=it',
+    'borsa_italiana_government': 'https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}-MOTX.html?lang=it',
+}
+
 
 class PriceRequest(BaseModel):
     instrument_id: str
@@ -45,8 +55,12 @@ app = FastAPI(
         {"name": "Assets", "description": "Upload and manage instrument JSON assets."},
         {"name": "Pricing", "description": "Run pricing workflows and read results."},
         {"name": "Jobs", "description": "Track asynchronous pricing jobs."},
+        # {"name": "AI", "description": "RAG-based Q&A over termsheets and pricing data."},
     ],
 )
+
+# from ai.router import router as ai_router
+# app.include_router(ai_router)
 
 # Allow the frontend dev server (vite) and other local tools to call the API
 app.add_middleware(
@@ -70,6 +84,30 @@ TERMSHEETS_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR: Path = PROJECT_ROOT / 'output'
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Azure Blob Storage config (optional — upload is skipped gracefully if not configured)
+AZURE_STORAGE_CONNECTION_STRING = os.getenv('AZURE_STORAGE_CONNECTION_STRING', '')
+AZURE_CONTAINER_NAME = os.getenv('CONTAINER_NAME', '')
+
+
+def _upload_blob(local_path: Path, blob_name: str) -> str | None:
+    """Upload a local file to Azure Blob Storage. Returns the blob URL or None on failure."""
+    if not AZURE_STORAGE_CONNECTION_STRING or not AZURE_CONTAINER_NAME:
+        print('[Azure] Skipping blob upload — AZURE_STORAGE_CONNECTION_STRING or CONTAINER_NAME not set')
+        return None
+    try:
+        from azure.storage.blob import BlobServiceClient
+        client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+        blob_client = client.get_blob_client(container=AZURE_CONTAINER_NAME, blob=blob_name)
+        with open(local_path, 'rb') as f:
+            blob_client.upload_blob(f, overwrite=True)
+        url = blob_client.url
+        print(f'[Azure] Uploaded {blob_name} → {url}')
+        return url
+    except Exception as e:
+        print(f'[Azure] Warning: blob upload failed for {blob_name}: {e}')
+        return None
+
+
 # Simple in-memory job registry for background tasks (non-persistent)
 JOBS = {}
 JOBS_LOCK = threading.Lock()
@@ -78,6 +116,7 @@ JOBS_LOCK = threading.Lock()
 assets = Assets()
 prices = Prices()
 underlying_assets = Assets()
+users: dict = {}  # keyed by email -> {email, firstname, lastname, password}
 
 
 @app.on_event('startup')
@@ -144,6 +183,36 @@ async def initialize_data():
         print(f"[API] Warning: could not extract underlying assets: {e}")
         underlying_assets = Assets()
 
+    # Load users
+    global users
+    try:
+        loaded_users = db.select_users()
+        users = {u['email']: u for u in loaded_users if u.get('email')}
+        print(f'[API] Loaded {len(users)} users from database')
+    except Exception as e:
+        print(f'[API] Warning: could not load users at startup: {e}')
+        users = {}
+
+    # Wire AI RAG engine so it always reads the current global state, then build index in background
+    # try:
+    #     from ai import rag as _ai_rag
+    #     import asyncio, concurrent.futures
+    #     def _get_assets(): return assets
+    #     def _get_prices(): return prices
+    #     _ai_rag.configure(_get_assets, _get_prices)
+    #     print('[API] AI RAG engine configured')
+    #     loop = asyncio.get_event_loop()
+    #     def _build():
+    #         try:
+    #             n = _ai_rag.build_index()
+    #             print(f'[API] AI RAG index ready: {n} chunks')
+    #         except Exception as be:
+    #             print(f'[API] Warning: could not build AI RAG index at startup: {be}')
+    #     loop.run_in_executor(None, _build)
+    # except Exception as e:
+    #     print(f'[API] Warning: could not configure AI RAG engine: {e}')
+
+
 def _write_log(log_path, obj):
     try:
         with open(log_path, 'a') as lf:
@@ -153,6 +222,7 @@ def _write_log(log_path, obj):
 
 
 def _run_price_all(job_id: str, cmd: list, log_path: Path):
+    print(f'[price_all] job={job_id} starting: {" ".join(cmd)}')
     with JOBS_LOCK:
         JOBS[job_id]['status'] = 'running'
         JOBS[job_id]['start_ts'] = datetime.utcnow().isoformat() + 'Z'
@@ -161,12 +231,17 @@ def _run_price_all(job_id: str, cmd: list, log_path: Path):
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
         stdout = proc.stdout or ''
         stderr = proc.stderr or ''
-        # write stdout/stderr to job
+        print(f'[price_all] job={job_id} returncode={proc.returncode}')
+        if stdout:
+            print(f'[price_all] stdout (last 2000):\n{stdout[-2000:]}')
+        if stderr:
+            print(f'[price_all] stderr (last 2000):\n{stderr[-2000:]}')
         with JOBS_LOCK:
             JOBS[job_id]['stdout'] = stdout[:500000]
             JOBS[job_id]['stderr'] = stderr[:500000]
             JOBS[job_id]['returncode'] = proc.returncode
     except Exception as e:
+        print(f'[price_all] job={job_id} subprocess exception: {e}')
         with JOBS_LOCK:
             JOBS[job_id]['status'] = 'failed'
             JOBS[job_id]['end_ts'] = datetime.utcnow().isoformat() + 'Z'
@@ -174,24 +249,38 @@ def _run_price_all(job_id: str, cmd: list, log_path: Path):
         _write_log(log_path, { 'ts': datetime.utcnow().isoformat() + 'Z', 'event': 'price_all', 'job': job_id, 'phase': 'failed', 'error': str(e) })
         return
 
-    # after running, try to read output/prices.json
+    # after running, try to read output/prices.json and reload global prices
     out_path = PROJECT_ROOT / 'output' / 'prices.json'
-    if out_path.exists() and (JOBS.get(job_id) is not None):
+    print(f'[price_all] job={job_id} looking for {out_path} (exists={out_path.exists()})')
+    if out_path.exists():
         try:
             with open(out_path, 'r') as f:
                 data = json.load(f)
+            # Reload global prices from the freshly written file
+            global prices
+            new_prices = Prices()
+            for item in (data if isinstance(data, list) else [data]):
+                try:
+                    p = Price.from_dict(item)
+                    new_prices[p.instrument_id] = p
+                except Exception as pe:
+                    print(f'[price_all] skipping price entry: {pe}')
+            prices = new_prices
+            print(f'[price_all] job={job_id} reloaded {len(prices)} prices into memory')
             with JOBS_LOCK:
                 JOBS[job_id]['status'] = 'succeeded'
                 JOBS[job_id]['end_ts'] = datetime.utcnow().isoformat() + 'Z'
-                JOBS[job_id]['result_count'] = len(data) if isinstance(data, list) else None
-            _write_log(log_path, { 'ts': datetime.utcnow().isoformat() + 'Z', 'event': 'price_all', 'job': job_id, 'phase': 'succeeded', 'stdout': stdout[:2000] })
+                JOBS[job_id]['result_count'] = len(prices)
+            _write_log(log_path, { 'ts': datetime.utcnow().isoformat() + 'Z', 'event': 'price_all', 'job': job_id, 'phase': 'succeeded', 'result_count': len(prices), 'stdout': stdout[:2000] })
         except Exception as e:
+            print(f'[price_all] job={job_id} failed to reload prices.json: {e}')
             with JOBS_LOCK:
                 JOBS[job_id]['status'] = 'failed'
                 JOBS[job_id]['end_ts'] = datetime.utcnow().isoformat() + 'Z'
                 JOBS[job_id]['error'] = f'Could not read prices.json: {e}'
             _write_log(log_path, { 'ts': datetime.utcnow().isoformat() + 'Z', 'event': 'price_all', 'job': job_id, 'phase': 'read_failed', 'error': str(e) })
     else:
+        print(f'[price_all] job={job_id} FAILED — prices.json not produced. returncode={proc.returncode}')
         with JOBS_LOCK:
             JOBS[job_id]['status'] = 'failed'
             JOBS[job_id]['end_ts'] = datetime.utcnow().isoformat() + 'Z'
@@ -478,6 +567,9 @@ async def termsheet_asset(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f'Could not store uploaded termsheet: {e}')
 
+    # Upload to Azure Blob Storage (non-blocking best-effort; does not block the response)
+    blob_url = _upload_blob(temp_pdf, filename)
+
     try:
         if str(PROJECT_ROOT) not in sys.path:
             sys.path.insert(0, str(PROJECT_ROOT))
@@ -507,6 +599,7 @@ async def termsheet_asset(file: UploadFile = File(...)):
         **result,
         'instrument_id': payload.get('instrument_id') or payload.get('isin'),
         'asset': payload,
+        'blob_url': blob_url,
     }
 
 
@@ -781,9 +874,28 @@ async def fetch_termsheet(instrument_id: str):
         raise HTTPException(status_code=400, detail='instrument_id is required')
 
     safe_id = Path(instrument_id.strip()).name
-    pdf_path = TERMSHEETS_DIR / f"{safe_id}.pdf"
+    blob_name = f"{safe_id}.pdf"
+
+    # Try Azure Blob Storage first
+    if AZURE_STORAGE_CONNECTION_STRING and AZURE_CONTAINER_NAME:
+        try:
+            from azure.storage.blob import BlobServiceClient
+            from fastapi.responses import StreamingResponse
+            client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+            blob_client = client.get_blob_client(container=AZURE_CONTAINER_NAME, blob=blob_name)
+            stream = blob_client.download_blob()
+            data = stream.readall()
+            return StreamingResponse(
+                iter([data]),
+                media_type='application/pdf',
+                headers={'Content-Disposition': f'inline; filename="{blob_name}"'},
+            )
+        except Exception as e:
+            print(f'[Azure] fetch_termsheet blob miss for {blob_name}: {e} — falling back to local')
+
+    # Fallback: local termsheets/ directory
+    pdf_path = TERMSHEETS_DIR / blob_name
     if not pdf_path.exists():
-        # fallback: try case-insensitive lookup
         candidates = [p for p in TERMSHEETS_DIR.glob('*.pdf') if p.stem.lower() == safe_id.lower()]
         if candidates:
             pdf_path = candidates[0]
@@ -793,7 +905,7 @@ async def fetch_termsheet(instrument_id: str):
     return FileResponse(
         path=str(pdf_path),
         media_type='application/pdf',
-        headers={"Content-Disposition": f'inline; filename="{pdf_path.name}"'},
+        headers={'Content-Disposition': f'inline; filename="{pdf_path.name}"'},
     )
 
 
@@ -902,7 +1014,14 @@ async def price(payload: PriceRequest):
             print(f"[/price] Stored pricing result in database for {instr}")
         except Exception as db_err:
             print(f"[/price] Warning: could not store pricing result in DB: {db_err}")
-        
+
+        # Update in-memory prices so /prices serves the new result immediately
+        try:
+            prices[instr] = Price.from_dict(result)
+            print(f"[/price] Updated in-memory prices for {instr}")
+        except Exception as upd_err:
+            logging.warning(f"[/price] Could not update in-memory prices: {upd_err}")
+
         entry['status'] = 200
         entry['msg'] = 'pricing_succeeded'
         _write_log(log_path, {**entry, 'event': 'pricing_succeeded'})
@@ -927,61 +1046,37 @@ async def get_job(job_id: str):
     return safe
 
 
-@app.get('/prices', tags=['Pricing'], summary='Get latest generated prices.json')
+@app.get('/prices', tags=['Pricing'], summary='Get all prices from in-memory cache')
 async def get_prices(request: Request):
-    """Return the generated output/prices.json if present and log access attempts."""
-    out_path = PROJECT_ROOT / 'output' / 'prices.json'
+    """Return all prices from the in-memory global prices variable."""
     log_path = PROJECT_ROOT / 'output' / 'prices_access.log'
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    entry = {
-        'ts': datetime.utcnow().isoformat() + 'Z',
-        'client': None,
-        'path': str(request.url.path),
-        'status': None,
-        'msg': None,
-    }
+    client = None
     try:
-        entry['client'] = request.client.host if request.client else None
+        client = request.client.host if request.client else None
     except Exception:
-        entry['client'] = None
-
-    if not out_path.exists():
-        entry['status'] = 404
-        entry['msg'] = 'prices.json not found'
-        try:
-            with open(log_path, 'a') as lf:
-                lf.write(json.dumps(entry) + '\n')
-        except Exception:
-            pass
-        print(f"[API] /prices - 404 - {entry['msg']} - client={entry['client']}")
-        raise HTTPException(status_code=404, detail='prices.json not found')
+        pass
 
     try:
-        with open(out_path, 'r') as f:
-            data = json.load(f)
-        entry['status'] = 200
-        try:
-            entry['msg'] = f"served {len(data)} entries" if isinstance(data, list) else 'served object'
-        except Exception:
-            entry['msg'] = 'served data'
+        data = prices.to_list()
+        entry = {
+            'ts': datetime.utcnow().isoformat() + 'Z',
+            'client': client,
+            'path': str(request.url.path),
+            'status': 200,
+            'msg': f'served {len(data)} entries',
+        }
         try:
             with open(log_path, 'a') as lf:
                 lf.write(json.dumps(entry) + '\n')
         except Exception:
             pass
-        print(f"[API] /prices - 200 OK - served to {entry['client']}")
+        print(f"[API] /prices - 200 OK - served to {client}")
         return data
     except Exception as e:
-        entry['status'] = 500
-        entry['msg'] = f'Could not read prices.json: {e}'
-        try:
-            with open(log_path, 'a') as lf:
-                lf.write(json.dumps(entry) + '\n')
-        except Exception:
-            pass
         print(f"[API] /prices - 500 - {e}")
-        raise HTTPException(status_code=500, detail=entry['msg'])
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get('/fetch_underlying_assets', tags=['Assets'], summary='Fetch all underlying assets')
@@ -1165,3 +1260,275 @@ async def update_curves(request: Request, payload: dict = None):
     t.start()
 
     return JSONResponse(status_code=202, content={'job_id': job_id, 'status_url': f'/jobs/{job_id}'})
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+class RegisterPayload(BaseModel):
+    email: str
+    firstname: str
+    lastname: str
+    password: str
+
+class LoginPayload(BaseModel):
+    email: str
+    password: str
+
+
+@app.get('/web_sources', tags=['Assets'], summary='List available web sources for asset scraping')
+def list_web_sources():
+    return {key: url for key, url in WEB_SOURCES.items()}
+
+
+@app.get('/fetch_asset_web', tags=['Assets'], summary='Scrape bond data from a registered web source and save it')
+async def fetch_asset_web(isin: str, source: str = 'borsa_italiana_mot'):
+    from bs4 import BeautifulSoup
+
+    if source not in WEB_SOURCES:
+        raise HTTPException(status_code=400, detail=f"Unknown source '{source}'. Available: {list(WEB_SOURCES.keys())}")
+
+    isin = isin.strip().upper()
+    url = WEB_SOURCES[source].format(isin=isin)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept-Language': 'it-IT,it;q=0.9,en;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    }
+    import asyncio
+    print(f'[fetch_asset_web] GET {url}')
+    try:
+        loop = asyncio.get_event_loop()
+        resp = await loop.run_in_executor(None, lambda: requests.get(url, headers=headers, timeout=20))
+    except requests.exceptions.ConnectionError as e:
+        raise HTTPException(status_code=502, detail=f'Connection error: {e} — URL: {url}')
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=502, detail=f'Timeout — URL: {url}')
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f'Unexpected error: {e} — URL: {url}')
+
+    print(f'[fetch_asset_web] HTTP {resp.status_code} — {url}')
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail=f'ISIN {isin} not found on {source} (HTTP 404) — URL: {url}')
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f'{source} returned HTTP {resp.status_code} — URL: {url}')
+
+    soup = BeautifulSoup(resp.text, 'lxml')
+
+    def _parse_it_date(s: str):
+        s = s.strip()
+        for fmt in ('%d/%m/%Y', '%d-%m-%Y', '%Y-%m-%d'):
+            try:
+                from datetime import datetime
+                return datetime.strptime(s, fmt).strftime('%Y-%m-%d')
+            except ValueError:
+                pass
+        return s
+
+    def _parse_it_number(s: str):
+        s = s.strip().replace('\xa0', '').replace(' ', '')
+        s = s.replace('.', '').replace(',', '.')
+        try:
+            v = float(s)
+            return int(v) if v == int(v) else v
+        except ValueError:
+            return s
+
+    def _parse_it_rate(s: str):
+        s = s.strip().replace(',', '.').replace('%', '').strip()
+        try:
+            return round(float(s) / 100.0, 8)
+        except ValueError:
+            return s
+
+    def _map_frequency(s: str):
+        m = {
+            'semestrale': 'Semiannual', 'annuale': 'Annual',
+            'trimestrale': 'Quarterly', 'mensile': 'Monthly',
+            'bimestrale': 'Bimonthly', 'annua': 'Annual',
+        }
+        return m.get(s.strip().lower(), s)
+
+    def _map_coupon(s: str):
+        m = {'fisso': 'fixed', 'variabile': 'floating', 'zero coupon': 'zero_coupon', 'misto': 'mixed'}
+        return m.get(s.strip().lower(), 'fixed')
+
+    def _map_day_count(s: str):
+        m = {
+            'act/act': 'Actual/Actual (Period Basis)',
+            'act/365': 'Actual365Fixed',
+            '30/360': '30/360',
+            '30e/360': '30E/360',
+        }
+        return m.get(s.strip().upper(), s)
+
+    LABEL_MAP = {
+        'nome': ('denomination', str),
+        'denominazione': ('denomination', str),
+        'isin': ('isin', str),
+        'emittente': ('issuer', str),
+        'data di emissione': ('issue_date', _parse_it_date),
+        'data emissione': ('issue_date', _parse_it_date),
+        'data di scadenza': ('maturity_date', _parse_it_date),
+        'scadenza': ('maturity_date', _parse_it_date),
+        'data di godimento': ('interest_commencement_date', _parse_it_date),
+        'godimento': ('interest_commencement_date', _parse_it_date),
+        'primo giorno di negoziazione': ('first_day_of_trading', _parse_it_date),
+        'cedola': ('fixed_coupon_rate', _parse_it_rate),
+        'tasso cedola': ('fixed_coupon_rate', _parse_it_rate),
+        'tasso': ('fixed_coupon_rate', _parse_it_rate),
+        'frequenza cedola': ('coupon_frequency', _map_frequency),
+        'frequenza': ('coupon_frequency', _map_frequency),
+        'taglio minimo': ('lot_size', _parse_it_number),
+        'lotto minimo': ('lot_size', _parse_it_number),
+        'valore nominale': ('par', _parse_it_number),
+        'ammontare in circolazione': ('outstanding', _parse_it_number),
+        'outstanding': ('outstanding', _parse_it_number),
+        'valuta': ('currency', str),
+        'convenzione calcolo interessi': ('accrual_day_count', _map_day_count),
+        'convenzione di calcolo': ('accrual_day_count', _map_day_count),
+        'mercato': ('market', str),
+        'clearing': ('clearing_settlement', str),
+        'clearing / settlement': ('clearing_settlement', str),
+        'tipo cedola': ('coupon_structure', _map_coupon),
+        'tipo di cedola': ('coupon_structure', _map_coupon),
+        'garanzia': ('guarantor', str),
+        'garante': ('guarantor', str),
+        'prezzo di emissione': ('issue_price', _parse_it_number),
+        'prezzo emissione': ('issue_price', _parse_it_number),
+        'seniority': ('seniority', str),
+        'tipologia': ('typology', str),
+        'tipo': ('typology', str),
+    }
+
+    raw = {}
+    for table in soup.find_all('table'):
+        for row in table.find_all('tr'):
+            cells = row.find_all(['td', 'th'])
+            if len(cells) >= 2:
+                label = cells[0].get_text(' ', strip=True).lower().strip(':').strip()
+                value = cells[1].get_text(' ', strip=True)
+                if label and value and value != '-':
+                    raw[label] = value
+
+    for dl in soup.find_all('dl'):
+        dts = dl.find_all('dt')
+        dds = dl.find_all('dd')
+        for dt, dd in zip(dts, dds):
+            label = dt.get_text(' ', strip=True).lower().strip(':').strip()
+            value = dd.get_text(' ', strip=True)
+            if label and value and value != '-':
+                raw[label] = value
+
+    mapped = {}
+    for label, value in raw.items():
+        if label in LABEL_MAP:
+            key, fn = LABEL_MAP[label]
+            try:
+                mapped[key] = fn(value)
+            except Exception:
+                mapped[key] = value
+
+    from datetime import date
+    today_str = date.today().strftime('%Y-%m-%d')
+
+    denomination = mapped.get('denomination', isin)
+    maturity_date = mapped.get('maturity_date', '')
+    issue_date = mapped.get('issue_date', '')
+    first_coupon_date = mapped.get('interest_commencement_date', issue_date)
+    fixed_coupon_rate = mapped.get('fixed_coupon_rate', 0.0)
+    coupon_frequency = mapped.get('coupon_frequency', 'Annual')
+    _freq_div = {'Annual': 1, 'Semiannual': 2, 'Quarterly': 4, 'Monthly': 12, 'Bimonthly': 6}
+    periodic_coupon_rate = (
+        round(fixed_coupon_rate / _freq_div.get(coupon_frequency, 1), 8)
+        if isinstance(fixed_coupon_rate, float) else None
+    )
+
+    result = {
+        'par': mapped.get('par', 100),
+        'isin': isin,
+        'model': 'bond',
+        'issuer': mapped.get('issuer', ''),
+        'market': mapped.get('market', 'MOT'),
+        'calendar': 'TARGET',
+        'currency': mapped.get('currency', 'EUR'),
+        'lot_size': mapped.get('lot_size', 1),
+        'typology': mapped.get('typology', ''),
+        'guarantor': mapped.get('guarantor') or None,
+        'seniority': mapped.get('seniority', ''),
+        'asset_type': 'bond',
+        'issue_date': issue_date,
+        'redemption': 100,
+        'description': denomination,
+        'expiry_date': maturity_date,
+        'outstanding': mapped.get('outstanding'),
+        'denomination': denomination,
+        'float_spread': None,
+        'target_price': 100,
+        'trading_type': 'Clean',
+        'instrument_id': isin,
+        'maturity_date': maturity_date,
+        'bond_structure': 'Plain Vanilla',
+        'date_generation': 'Forward',
+        'evaluation_date': today_str,
+        'coupon_frequency': coupon_frequency,
+        'coupon_structure': mapped.get('coupon_structure', 'fixed'),
+        'credit_spread_bp': None,
+        'accrual_day_count': mapped.get('accrual_day_count', 'Actual/Actual (Period Basis)'),
+        'first_coupon_date': first_coupon_date,
+        'fixed_coupon_rate': fixed_coupon_rate,
+        'annual_coupon_rate': fixed_coupon_rate,
+        'clearing_settlement': mapped.get('clearing_settlement', ''),
+        'settlement_currency': mapped.get('currency', 'EUR'),
+        'day_count_convention': mapped.get('accrual_day_count', 'ACT/ACT (PERIODIC BASIS)'),
+        'first_day_of_trading': mapped.get('first_day_of_trading', ''),
+        'negotiation_currency': mapped.get('currency', 'EUR'),
+        'periodic_coupon_rate': periodic_coupon_rate,
+        'business_day_convention': 'Unadjusted',
+        'interest_commencement_date': first_coupon_date,
+        '_code': isin,
+    }
+
+    if not maturity_date:
+        raise HTTPException(status_code=422, detail=f'Could not parse bond data for {isin} — check the ISIN or the page structure.')
+
+    saved = await _save_asset_data(result)
+    print(f'[fetch_asset_web] Saved {isin} from {source}: {saved}')
+    return result
+
+
+@app.post('/register', tags=['General'], summary='Register a new user')
+async def register_user(payload: RegisterPayload):
+    email = payload.email.strip().lower()
+    if email in users:
+        raise HTTPException(status_code=409, detail='A user with this email already exists.')
+    password_hash = bcrypt.hashpw(payload.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    try:
+        db.insert_user(email, payload.firstname.strip(), payload.lastname.strip(), password_hash)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'Could not save user: {e}')
+    users[email] = {
+        'email': email,
+        'firstname': payload.firstname.strip(),
+        'lastname': payload.lastname.strip(),
+        'password': password_hash,
+    }
+    return {'status': 'ok', 'email': email}
+
+
+@app.post('/login', tags=['General'], summary='Authenticate a user')
+async def login_user(payload: LoginPayload):
+    email = payload.email.strip().lower()
+    user = users.get(email)
+    if not user:
+        raise HTTPException(status_code=401, detail='Invalid email or password.')
+    stored_hash = user['password']
+    if not bcrypt.checkpw(payload.password.encode('utf-8'), stored_hash.encode('utf-8')):
+        raise HTTPException(status_code=401, detail='Invalid email or password.')
+    return {
+        'status': 'ok',
+        'email': user['email'],
+        'firstname': user['firstname'],
+        'lastname': user['lastname'],
+    }

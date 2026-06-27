@@ -1,15 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { formatNumberForDisplay, isPercentageKey } from './helper'
 import { useAsset } from './hooks/useAsset'
-import {
-  Radar,
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
-  ResponsiveContainer,
-  Tooltip,
-} from 'recharts'
+import DataChart from './components/DataChart'
 
 export default function Instrument({ instrumentId, apiBase = '' }) {
   // instrumentId may be encoded as "ID::bond_file.json" from the table link
@@ -40,7 +32,6 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
   const [modelOptions, setModelOptions] = useState([])
   const [modelFieldData, setModelFieldData] = useState([])
   const [fields, setFields] = useState([])
-
   useEffect(() => {
     let mounted = true
     async function fetchJson() {
@@ -149,26 +140,10 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
     return Number.isFinite(n) ? n : null
   }
 
-  const targetPrice = toFiniteNumber(data.target_price)
-  const radarSource = [
-    { metric: 'PV', actual: toFiniteNumber(colPV) },
-    { metric: 'PV_to_worst', actual: toFiniteNumber(colWorst) },
-    { metric: 'PV_to_maturity', actual: toFiniteNumber(colMat) },
-  ]
+  const sensitivityData = (priceResult?.sensitivity || [])
+    .filter(s => Number.isFinite(s.spread_bp) && Number.isFinite(s.pv_note_pct))
+    .map(s => ({ x: s.spread_bp, y: s.pv_note_pct }))
 
-  const hasRadarChart = Number.isFinite(targetPrice) && radarSource.every((d) => Number.isFinite(d.actual))
-  const radarData = hasRadarChart
-    ? radarSource.map((d) => ({
-        metric: d.metric,
-        // Chart radius represents distance from target price, so target sits at the center.
-        delta_from_target: Math.abs(d.actual - targetPrice),
-        actual: d.actual,
-        target: targetPrice,
-      }))
-    : []
-  const radarMax = hasRadarChart
-    ? Math.max(...radarData.map((d) => d.delta_from_target), 1)
-    : 1
 
   const renderValue = (k, v) => {
     const truncate = (s, n = 50) => (typeof s === 'string' && s.length > n) ? s.slice(0, n - 1) + '…' : s
@@ -509,87 +484,8 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
       </div>
       <h2>{(data.description ? (data.description.length > 100 ? data.description.slice(0, 99) + '…' : data.description) : instrumentId)}</h2>
       <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 16, gap: 16 }}>
-        <div style={{ width: 380, height: 300, position: 'relative' }}>
-          {hasRadarChart ? (
-            <>
-              <ResponsiveContainer width="100%" height="100%">
-                <RadarChart data={radarData} outerRadius="72%">
-                  <PolarGrid />
-                  <PolarAngleAxis
-                    dataKey="metric"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={({ x, y, payload, textAnchor }) => {
-                      const item = radarData.find((d) => d.metric === payload?.value)
-                      if (!item || !Number.isFinite(x) || !Number.isFinite(y)) return null
-                      return (
-                        <text
-                          x={x}
-                          y={y}
-                          textAnchor={textAnchor || 'middle'}
-                          dominantBaseline="central"
-                          fill="#ffffff"
-                          fontSize={11}
-                          fontWeight={600}
-                          stroke="#0f172a"
-                          strokeWidth={2}
-                          paintOrder="stroke"
-                        >
-                          {formatNumberForDisplay(item.actual)}
-                        </text>
-                      )
-                    }}
-                  />
-                  <PolarRadiusAxis
-                    domain={[0, radarMax]}
-                    tick={false}
-                    axisLine={false}
-                  />
-                  <Tooltip
-                    formatter={(value, name, payload) => {
-                      if (name === 'delta_from_target') {
-                        const item = payload && payload.payload ? payload.payload : null
-                        const actual = item && Number.isFinite(item.actual)
-                          ? formatNumberForDisplay(item.actual)
-                          : '-'
-                        const target = item && Number.isFinite(item.target)
-                          ? formatNumberForDisplay(item.target)
-                          : '-'
-                        return [`Δ ${formatNumberForDisplay(Number(value))} | actual ${actual} | target ${target}`, 'distance']
-                      }
-                      return [formatNumberForDisplay(Number(value)), name]
-                    }}
-                  />
-                  <Radar
-                    name="distance"
-                    dataKey="delta_from_target"
-                    stroke="#206095"
-                    fill="#206095"
-                    fillOpacity={0.35}
-                  />
-                </RadarChart>
-              </ResponsiveContainer>
-              <div
-                style={{
-                  position: 'absolute',
-                  left: '50%',
-                  top: '50%',
-                  transform: 'translate(-50%, -50%)',
-                  fontSize: 12,
-                  textAlign: 'center',
-                  lineHeight: 1.2,
-                  color: '#ffffff',
-                  pointerEvents: 'none',
-                }}
-              >
-                <div>{formatNumberForDisplay(targetPrice)}</div>
-              </div>
-            </>
-          ) : (
-            <div style={{ padding: 8, color: '#6b7280' }}>
-              Spider chart unavailable: missing numeric PV/target values.
-            </div>
-          )}
+        <div style={{ width: 380, height: 300 }}>
+          <DataChart data={sensitivityData} />
         </div>
         <table className="instrument-table" style={{ border: 'none', alignSelf: 'flex-start' }}>
           <tbody>
@@ -635,6 +531,7 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
             )}
           </tbody>
         </table>
+
       </div>
       <table className="instrument-table" style={{width: '100%', border: 'none'}}>
         <tbody>

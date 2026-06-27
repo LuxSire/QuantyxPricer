@@ -66,18 +66,30 @@ def get_calendar(name: str):
 
 def get_day_count(name: str):
     day_counts = {
-        'Actual365Fixed': ql.Actual365Fixed,
-        'Actual360': ql.Actual360,
-        'Thirty360': lambda: ql.Thirty360(ql.Thirty360.BondBasis),
+        'actual365fixed': ql.Actual365Fixed,
+        'actual/365': ql.Actual365Fixed,
+        'act/365': ql.Actual365Fixed,
+        'actual360': ql.Actual360,
+        'actual/360': ql.Actual360,
+        'act/360': ql.Actual360,
+        'thirty360': lambda: ql.Thirty360(ql.Thirty360.BondBasis),
         '30/360': lambda: ql.Thirty360(ql.Thirty360.BondBasis),
-        'ActualActual': lambda: ql.ActualActual(ql.ActualActual.ISDA),
-        'ACT/ACT': lambda: ql.ActualActual(ql.ActualActual.ISDA),
-        'ACT/ACT (PERIODIC BASIS)': lambda: ql.ActualActual(ql.ActualActual.ISDA),
-        'ACT/ACT (ICMA)': lambda: ql.ActualActual(ql.ActualActual.ISDA),
+        '30e/360': lambda: ql.Thirty360(ql.Thirty360.EurobondBasis),
+        'actualactual': lambda: ql.ActualActual(ql.ActualActual.ISDA),
+        'act/act': lambda: ql.ActualActual(ql.ActualActual.ISDA),
+        'act/act (isda)': lambda: ql.ActualActual(ql.ActualActual.ISDA),
+        'actual/actual (isda)': lambda: ql.ActualActual(ql.ActualActual.ISDA),
+        'act/act (icma)': lambda: ql.ActualActual(ql.ActualActual.ISMA),
+        'act/act (isma)': lambda: ql.ActualActual(ql.ActualActual.ISMA),
+        'actual/actual (icma)': lambda: ql.ActualActual(ql.ActualActual.ISMA),
+        'act/act (periodic basis)': lambda: ql.ActualActual(ql.ActualActual.ISMA),
+        'actual/actual (period basis)': lambda: ql.ActualActual(ql.ActualActual.ISMA),
+        'actual/actual (periodic basis)': lambda: ql.ActualActual(ql.ActualActual.ISMA),
     }
-    if name not in day_counts:
+    key = name.strip().lower()
+    if key not in day_counts:
         raise ValueError(f'Unsupported day count: {name}')
-    return day_counts[name]()
+    return day_counts[key]()
 
 
 

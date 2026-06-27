@@ -75,7 +75,28 @@ CURVES_DIR = PROJECT_ROOT / 'curves'
 CURVE_FILE = CURVES_DIR / 'swap_curves.json'
 
 
-def price_asset(bond_data, curve_json, issuer_spread_bp=None):
+def _scaled_bond_data(bond_data, multiplier):
+    d = dict(bond_data)
+    if d.get('underlyings'):
+        d['underlyings'] = [
+            {**ul, 'initial_fixing_level': float(ul.get('initial_fixing_level', 0.0)) * multiplier}
+            for ul in d['underlyings']
+        ]
+    if d.get('underlying') and float((d.get('underlying') or {}).get('initial_fixing_level', 0.0)) > 0:
+        d['underlying'] = {**d['underlying'], 'initial_fixing_level': float(d['underlying']['initial_fixing_level']) * multiplier}
+    return d
+
+
+def price_sensitivity(bond_data, curve_json, n_steps=2, step_pct=0.10):
+    multipliers = [1.0 + (i - n_steps) * step_pct for i in range(2 * n_steps + 1)]
+    sensitivity = []
+    for m in multipliers:
+        r = price_asset(_scaled_bond_data(bond_data, m), curve_json, _skip_sensitivity=True)
+        sensitivity.append({'spread_bp': round(m * 100, 1), 'pv_note_pct': r['price_pct']['pv_note']})
+    return sensitivity
+
+
+def price_asset(bond_data, curve_json, issuer_spread_bp=None, _skip_sensitivity=False):
     convertible_type = str(bond_data.get('convertible_type', 'reverse')).strip().lower()
     if convertible_type not in ('reverse', 'standard'):
         raise ValueError(f"convertible_type must be 'reverse' or 'standard', got '{convertible_type}'")
@@ -143,7 +164,7 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
 
     _, s0_0, _, strike_0, conv_0, _, _ = ul_paths[0]
 
-    return {
+    result = {
         'selected_npv': npv,
         'npv': npv,
         'clean_price': npv - accrued_amount,
@@ -165,6 +186,9 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
         },
         'npv_to_maturity': npv,
     }
+    if not _skip_sensitivity:
+        result['sensitivity'] = price_sensitivity(bond_data, curve_json)
+    return result
 
 
 def print_result(bond_data, result):
@@ -180,6 +204,11 @@ def print_result(bond_data, result):
     print(f"NPV: {result['npv']:.4f}")
     print(f"Clean price: {result['clean_price']:.4f}")
     print(f"Accrued amount: {result['accrued_amount']:.4f}")
+    if result.get('sensitivity'):
+        print('Equity path sensitivity (% of initial fixing → PV%):')
+        print(f"  {'Level%':>8}  {'PV(Note)%':>12}")
+        for s in result['sensitivity']:
+            print(f"  {s['spread_bp']:>8.1f}  {s['pv_note_pct']:>12.6f}")
     print()
 
 

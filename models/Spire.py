@@ -335,7 +335,30 @@ def _price_with_curve(note_data, curve, curve_day_count,
     }
 
 
-def price_asset(note_data, curve_json):
+def price_sensitivity(note_data, curve_json, n_steps=2, step_pct=0.10):
+    """Return a vector of {spread_bp, pv_note_pct} at 2×n_steps+1 spread levels.
+
+    The base spread (credit_spread_bp + collateral_spread_bp) is the centre.
+    Each step shifts by step_pct × base (default 10%), so with n_steps=2 the
+    levels are base × {0.80, 0.90, 1.00, 1.10, 1.20}.
+    """
+    base_spread = float(note_data.get('credit_spread_bp', 0.0)) + float(
+        note_data.get('collateral_spread_bp') or note_data.get('collateral_spread') or 0.0
+    )
+    multipliers = [1.0 + (i - n_steps) * step_pct for i in range(2 * n_steps + 1)]
+    sensitivity = []
+    for m in multipliers:
+        level = round(base_spread * m, 6)
+        d = {**note_data, 'credit_spread_bp': level, 'collateral_spread_bp': 0.0}
+        r = price_asset(d, curve_json, _skip_sensitivity=True)
+        sensitivity.append({
+            'spread_bp':    level,
+            'pv_note_pct':  r['price_pct']['pv_note'],
+        })
+    return sensitivity
+
+
+def price_asset(note_data, curve_json, _skip_sensitivity=False):
     evaluation_date = parse_date(note_data['evaluation_date'])
 
     note_curve_cfg,       note_curve_name       = select_note_curve(note_data, curve_json)
@@ -413,6 +436,8 @@ def price_asset(note_data, curve_json):
     }
     result['ytm_promised'] = result['ytm']
     result['ytm_expected'] = result['ytm']
+    if not _skip_sensitivity:
+        result['sensitivity'] = price_sensitivity(note_data, curve_json)
     return result
 
 
@@ -441,6 +466,13 @@ def print_report(note_data, result):
     print(f"Check LHS PV(Note) %: {pct['identity_lhs_pv_note']:.6f}")
     print(f"Check RHS Collateral+Swap-Adjustments %: {pct['identity_rhs_reconstructed']:.6f}")
     print(f"Identity error %: {pct['identity_error']:.8f}")
+    sensitivity = result.get('sensitivity')
+    if sensitivity:
+        print('Spread sensitivity (PV note %):')
+        for s in sensitivity:
+            marker = ' ◀' if abs(s['spread_bp'] - float(note_data.get('credit_spread_bp', 0.0))
+                                   - float(note_data.get('collateral_spread_bp') or 0.0)) < 0.01 else ''
+            print(f"  {s['spread_bp']:>8.2f} bp  →  {s['pv_note_pct']:.6f}%{marker}")
     monte = result.get('note_leg', {}).get('monte_info') or result.get('monte_info')
     if monte:
         p_call = monte.get('p_call')

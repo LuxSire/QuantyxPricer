@@ -3,9 +3,9 @@
   "currency": "USD",
   "model": "bond",
   "description": "Amazon Sr Unsec callable fixed bond simplified to next call",
-  "evaluation_date": "08-06-2026",
-  "issue_date": "13-03-2026",
-  "maturity_date": "13-03-2046",
+  "evaluation_date": "2026-06-08",
+  "issue_date": "2026-03-13",
+  "maturity_date": "2046-03-13",
   "calendar": "TARGET",
   "accrual_day_count": "30/360",
   "business_day_convention": "ModifiedFollowing",
@@ -17,7 +17,11 @@
   "credit_spread_bp": 110.0,
   "callable_type": "european",
   "valuation_mode": "first_call",
-  "call_dates": ["13-09-2045"],
+  "call_dates": [
+    "13-09-2045"
+  ],
   "redemption": 100.0,
-  "call_price": 100.0
+  "call_price": 100.0,
+  "target_price": 100,
+  "asset_type": "bond"
 }

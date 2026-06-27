@@ -199,21 +199,22 @@ class TS_Dict:
 @dataclass
 class Price:
     """Represents a single price record for an instrument."""
-    
+
     instrument_id: str
     bond_file: Optional[str] = None
     model: Optional[str] = None
     currency: Optional[str] = None
     pdf: Optional[str] = None
     result: Optional[Dict[str, Any]] = None
-    
+    _datetime: Optional[str] = None
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Price':
         """Create a Price instance from a dictionary.
-        
+
         Args:
             data: Dictionary containing price data
-            
+
         Returns:
             Price instance
         """
@@ -223,7 +224,8 @@ class Price:
             model=data.get('model'),
             currency=data.get('currency'),
             pdf=data.get('pdf'),
-            result=data.get('result')
+            result=data.get('result'),
+            _datetime=data.get('_datetime'),
         )
     
     def to_dict(self) -> Dict[str, Any]:

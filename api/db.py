@@ -169,12 +169,19 @@ def select_prices() -> list[Dict[str, Any]]:
     try:
         cursor = conn.cursor(dictionary=True)
         try:
-            cursor.execute('SELECT  code, json FROM prices WHERE provider=%s', ('INTERNAL',))
+            cursor.execute('SELECT code, json, datetime FROM prices WHERE provider=%s', ('INTERNAL',))
             rows = cursor.fetchall()
         finally:
             cursor.close()
 
-        return [_decode_json_row(row) for row in rows]
+        result = []
+        for row in rows:
+            obj = _decode_json_row(row)
+            dt = row.get('datetime')
+            if dt is not None:
+                obj['_datetime'] = dt.isoformat() if hasattr(dt, 'isoformat') else str(dt)
+            result.append(obj)
+        return result
     finally:
         conn.close()
 
@@ -184,7 +191,7 @@ def select_timeseries() -> list[Dict[str, Any]]:
     try:
         cursor = conn.cursor(dictionary=True)
         try:
-            cursor.execute('SELECT  code, json FROM prices WHERE provider=%s', ('eodhd',))
+            cursor.execute('SELECT  code, json,datetime FROM prices WHERE provider=%s', ('eodhd',))
             rows = cursor.fetchall()
         finally:
             cursor.close()
@@ -199,7 +206,7 @@ def select_price(code: str) -> Optional[Dict[str, Any]]:
     try:
         cursor = conn.cursor(dictionary=True)
         try:
-            cursor.execute('SELECT code, json FROM prices WHERE provider=%s AND code=%s LIMIT 1', ('INTERNAL', code))
+            cursor.execute('SELECT code, json, datetime FROM prices WHERE provider=%s AND code=%s LIMIT 1', ('INTERNAL', code))
             row = cursor.fetchone()
         finally:
             cursor.close()

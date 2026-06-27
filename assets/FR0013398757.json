@@ -3,9 +3,9 @@
   "currency": "EUR",
   "model": "bond",
   "description": "BNP Paribas callable fixed-rate subordinated bond",
-  "evaluation_date": "08-06-2026",
-  "issue_date": "28-01-2019",
-  "maturity_date": "28-01-2039",
+  "evaluation_date": "2026-06-08",
+  "issue_date": "2019-01-28",
+  "maturity_date": "2039-01-28",
   "calendar": "TARGET",
   "accrual_day_count": "Actual360",
   "business_day_convention": "ModifiedFollowing",
@@ -13,11 +13,15 @@
   "coupon_structure": "fixed",
   "fixed_coupon_rate": 0.0334,
   "coupon_frequency": "Annual",
-  "par": 100.0,
-  "credit_spread_bp": 15.0,
+  "par": 100,
+  "credit_spread_bp": 15,
   "callable_type": "european",
-  "call_dates": ["28-01-2034"],
+  "call_dates": [
+    "28-01-2034"
+  ],
   "valuation_mode": "first_call",
-  "redemption": 100.0,
-  "call_price": 100.0
+  "redemption": 100,
+  "call_price": 100,
+  "target_price": 100,
+  "asset_type": "bond"
 }

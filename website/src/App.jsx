@@ -201,6 +201,7 @@ function AuthenticatedApp({ apiBase, onLogout }) {
               { key: 'pv_mat', label: 'PV to maturity', className: 'center', value: (r) => fmt(r.result?.price_pct?.pv_note_to_maturity ?? r.result?.npv_to_maturity ?? '') },
               { key: 'ytm', label: 'YTM', className: 'center', value: (r) => fmtPct(r.result?.ytm ?? r.result?.ytm_expected ?? r.result?.model_ytm_to_maturity ?? r.result?.yield_to_maturity) },
               { key: 'model', label: 'Model' },
+              { key: '_datetime', label: 'Last', className: 'center' },
             ]}
             data={visibleRows}
             pageSize={10}
@@ -228,6 +229,7 @@ function AuthenticatedApp({ apiBase, onLogout }) {
             renderRow={(r) => {
               const res = r.result || {}
               const id = r.instrument_id || res.instrument_id || r.bond_file || ''
+              const dt = r._datetime ? r._datetime.replace('T', ' ').slice(0, 16) : ''
               return (
                 <>
                   <td className="mono">
@@ -239,6 +241,7 @@ function AuthenticatedApp({ apiBase, onLogout }) {
                   <td className="center">{fmt(res.price_pct?.pv_note_to_maturity ?? res.npv_to_maturity ?? '')}</td>
                   <td className="center">{fmtPct(res.ytm ?? res.ytm_expected ?? res.model_ytm_to_maturity ?? res.yield_to_maturity)}</td>
                   <td>{r.model || res.model || ''}</td>
+                  <td className="center">{dt}</td>
                 </>
               )
             }}
@@ -293,6 +296,8 @@ function AuthenticatedApp({ apiBase, onLogout }) {
                 { key: 'name', label: 'Name' },
                 { key: 'asset_type', label: 'Asset Type' },
                 { key: 'currency', label: 'Currency' },
+                { key: 'last_close', label: 'Last Close', className: 'center' },
+                { key: 'last_close_date', label: 'Date', className: 'center' },
               ]}
               data={underlyingAssets}
               onRowAction={(asset) => {
@@ -319,6 +324,8 @@ function AuthenticatedApp({ apiBase, onLogout }) {
                   <td>{asset.name || ''}</td>
                   <td>{asset.asset_type || ''}</td>
                   <td>{asset.currency || ''}</td>
+                  <td className="center">{asset.last_close != null ? Number(asset.last_close).toFixed(4) : ''}</td>
+                  <td className="center">{asset.last_close_date || ''}</td>
                 </>
               )}
               emptyMessage="No underlying assets found."

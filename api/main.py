@@ -35,8 +35,6 @@ from pydantic import BaseModel
 
 WEB_SOURCES: dict = {
     'borsa_italiana_mot': 'https://www.borsaitaliana.it/borsa/obbligazioni/mot/obbligazioni-in-euro/scheda/{isin}-MOTX.html?lang=it',
-    'borsa_italiana_extramot': 'https://www.borsaitaliana.it/borsa/obbligazioni/extramot/scheda/{isin}.html?lang=it',
-    'borsa_italiana_government': 'https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}-MOTX.html?lang=it',
 }
 
 
@@ -674,22 +672,6 @@ async def update_model(payload: UpdateModelRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get('/fetch_underlying_assets', tags=['Assets'], summary='Fetch all underlying assets')
-async def fetch_underlying_assets():
-    try:
-        # Convert underlying_assets Assets collection to list of dicts
-        result = []
-        for asset in underlying_assets.values():
-            if hasattr(asset, 'to_dict'):
-                result.append(asset.to_dict())
-            elif isinstance(asset, dict):
-                result.append(asset)
-        print(f"[API] Returning {len(result)} underlying assets")
-        return result
-    except Exception as e:
-        print(f"[API] Error fetching underlying assets: {e}")
-        raise HTTPException(status_code=500, detail='Could not fetch underlying assets')
-
 def _is_equity_asset(asset: dict) -> bool:
     """Heuristic detection whether an asset represents an equity.
 
@@ -1082,15 +1064,29 @@ async def get_prices(request: Request):
 @app.get('/fetch_underlying_assets', tags=['Assets'], summary='Fetch all underlying assets')
 async def fetch_underlying_assets():
     try:
-        # Convert underlying_assets Assets collection to list of dicts
         result = []
         for asset in underlying_assets.values():
             if hasattr(asset, 'to_dict'):
-                result.append(asset.to_dict())
+                item = asset.to_dict()
             elif isinstance(asset, dict):
-                result.append(asset)
+                item = dict(asset)
+            else:
+                continue
+
+            # Append last close + date from the in-memory time series
+            ts = getattr(asset, 'ts', None)
+            if ts is not None and len(ts) > 0:
+                last_date = max(ts.keys())
+                last_bar = ts[last_date]
+                item['last_close'] = last_bar.close
+                item['last_close_date'] = last_date
+            else:
+                item['last_close'] = None
+                item['last_close_date'] = None
+
+            result.append(item)
+
         print(f"[API] Returning {len(result)} underlying assets")
-        # Save to a JSON file and return it
         out_path = PROJECT_ROOT / 'output' / 'fetch_underlying_assets.json'
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, 'w') as f:
@@ -1282,126 +1278,53 @@ def list_web_sources():
     return {key: url for key, url in WEB_SOURCES.items()}
 
 
-@app.get('/fetch_asset_web', tags=['Assets'], summary='Scrape bond data from a registered web source and save it')
-async def fetch_asset_web(isin: str, source: str = 'borsa_italiana_mot'):
-    from bs4 import BeautifulSoup
+# ---------------------------------------------------------------------------
+# Shared scraping helpers
+# ---------------------------------------------------------------------------
 
-    if source not in WEB_SOURCES:
-        raise HTTPException(status_code=400, detail=f"Unknown source '{source}'. Available: {list(WEB_SOURCES.keys())}")
-
-    isin = isin.strip().upper()
-    url = WEB_SOURCES[source].format(isin=isin)
+def _scrape_fetch(url: str, extra_headers: dict = None) -> requests.Response:
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept-Language': 'it-IT,it;q=0.9,en;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,it;q=0.8',
     }
-    import asyncio
-    print(f'[fetch_asset_web] GET {url}')
-    try:
-        loop = asyncio.get_event_loop()
-        resp = await loop.run_in_executor(None, lambda: requests.get(url, headers=headers, timeout=20))
-    except requests.exceptions.ConnectionError as e:
-        raise HTTPException(status_code=502, detail=f'Connection error: {e} — URL: {url}')
-    except requests.exceptions.Timeout:
-        raise HTTPException(status_code=502, detail=f'Timeout — URL: {url}')
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f'Unexpected error: {e} — URL: {url}')
+    if extra_headers:
+        headers.update(extra_headers)
+    return requests.get(url, headers=headers, timeout=20)
 
-    print(f'[fetch_asset_web] HTTP {resp.status_code} — {url}')
-    if resp.status_code == 404:
-        raise HTTPException(status_code=404, detail=f'ISIN {isin} not found on {source} (HTTP 404) — URL: {url}')
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f'{source} returned HTTP {resp.status_code} — URL: {url}')
 
-    soup = BeautifulSoup(resp.text, 'lxml')
-
-    def _parse_it_date(s: str):
-        s = s.strip()
-        for fmt in ('%d/%m/%Y', '%d-%m-%Y', '%Y-%m-%d'):
-            try:
-                from datetime import datetime
-                return datetime.strptime(s, fmt).strftime('%Y-%m-%d')
-            except ValueError:
-                pass
-        return s
-
-    def _parse_it_number(s: str):
-        s = s.strip().replace('\xa0', '').replace(' ', '')
-        s = s.replace('.', '').replace(',', '.')
+def _parse_date_any(s: str) -> str:
+    s = s.strip()
+    from datetime import datetime as _dt
+    for fmt in ('%d/%m/%Y', '%d-%m-%Y', '%Y-%m-%d', '%d.%m.%Y', '%b %d, %Y', '%d %b %Y', '%B %d, %Y'):
         try:
-            v = float(s)
+            return _dt.strptime(s, fmt).strftime('%Y-%m-%d')
+        except ValueError:
+            pass
+    return s
+
+
+def _parse_number_any(s: str):
+    s = s.strip().replace('\xa0', '').replace(' ', '').replace(' ', '')
+    for cleaned in (s.replace('.', '').replace(',', '.'), s.replace(',', '')):
+        try:
+            v = float(cleaned)
             return int(v) if v == int(v) else v
         except ValueError:
-            return s
+            pass
+    return s
 
-    def _parse_it_rate(s: str):
-        s = s.strip().replace(',', '.').replace('%', '').strip()
-        try:
-            return round(float(s) / 100.0, 8)
-        except ValueError:
-            return s
 
-    def _map_frequency(s: str):
-        m = {
-            'semestrale': 'Semiannual', 'annuale': 'Annual',
-            'trimestrale': 'Quarterly', 'mensile': 'Monthly',
-            'bimestrale': 'Bimonthly', 'annua': 'Annual',
-        }
-        return m.get(s.strip().lower(), s)
+def _parse_rate_any(s: str):
+    s = s.strip().replace(',', '.').replace('%', '').strip()
+    try:
+        v = float(s)
+        return round(v / 100.0, 8) if v > 1.5 else round(v, 8)
+    except ValueError:
+        return s
 
-    def _map_coupon(s: str):
-        m = {'fisso': 'fixed', 'variabile': 'floating', 'zero coupon': 'zero_coupon', 'misto': 'mixed'}
-        return m.get(s.strip().lower(), 'fixed')
 
-    def _map_day_count(s: str):
-        m = {
-            'act/act': 'Actual/Actual (Period Basis)',
-            'act/365': 'Actual365Fixed',
-            '30/360': '30/360',
-            '30e/360': '30E/360',
-        }
-        return m.get(s.strip().upper(), s)
-
-    LABEL_MAP = {
-        'nome': ('denomination', str),
-        'denominazione': ('denomination', str),
-        'isin': ('isin', str),
-        'emittente': ('issuer', str),
-        'data di emissione': ('issue_date', _parse_it_date),
-        'data emissione': ('issue_date', _parse_it_date),
-        'data di scadenza': ('maturity_date', _parse_it_date),
-        'scadenza': ('maturity_date', _parse_it_date),
-        'data di godimento': ('interest_commencement_date', _parse_it_date),
-        'godimento': ('interest_commencement_date', _parse_it_date),
-        'primo giorno di negoziazione': ('first_day_of_trading', _parse_it_date),
-        'cedola': ('fixed_coupon_rate', _parse_it_rate),
-        'tasso cedola': ('fixed_coupon_rate', _parse_it_rate),
-        'tasso': ('fixed_coupon_rate', _parse_it_rate),
-        'frequenza cedola': ('coupon_frequency', _map_frequency),
-        'frequenza': ('coupon_frequency', _map_frequency),
-        'taglio minimo': ('lot_size', _parse_it_number),
-        'lotto minimo': ('lot_size', _parse_it_number),
-        'valore nominale': ('par', _parse_it_number),
-        'ammontare in circolazione': ('outstanding', _parse_it_number),
-        'outstanding': ('outstanding', _parse_it_number),
-        'valuta': ('currency', str),
-        'convenzione calcolo interessi': ('accrual_day_count', _map_day_count),
-        'convenzione di calcolo': ('accrual_day_count', _map_day_count),
-        'mercato': ('market', str),
-        'clearing': ('clearing_settlement', str),
-        'clearing / settlement': ('clearing_settlement', str),
-        'tipo cedola': ('coupon_structure', _map_coupon),
-        'tipo di cedola': ('coupon_structure', _map_coupon),
-        'garanzia': ('guarantor', str),
-        'garante': ('guarantor', str),
-        'prezzo di emissione': ('issue_price', _parse_it_number),
-        'prezzo emissione': ('issue_price', _parse_it_number),
-        'seniority': ('seniority', str),
-        'tipologia': ('typology', str),
-        'tipo': ('typology', str),
-    }
-
+def _extract_kv(soup) -> dict:
     raw = {}
     for table in soup.find_all('table'):
         for row in table.find_all('tr'):
@@ -1409,30 +1332,20 @@ async def fetch_asset_web(isin: str, source: str = 'borsa_italiana_mot'):
             if len(cells) >= 2:
                 label = cells[0].get_text(' ', strip=True).lower().strip(':').strip()
                 value = cells[1].get_text(' ', strip=True)
-                if label and value and value != '-':
-                    raw[label] = value
-
+                if label and value and value not in ('-', 'N/A', 'n/a', ''):
+                    raw.setdefault(label, value)
     for dl in soup.find_all('dl'):
-        dts = dl.find_all('dt')
-        dds = dl.find_all('dd')
-        for dt, dd in zip(dts, dds):
+        for dt, dd in zip(dl.find_all('dt'), dl.find_all('dd')):
             label = dt.get_text(' ', strip=True).lower().strip(':').strip()
             value = dd.get_text(' ', strip=True)
-            if label and value and value != '-':
-                raw[label] = value
+            if label and value and value not in ('-', 'N/A', ''):
+                raw.setdefault(label, value)
+    return raw
 
-    mapped = {}
-    for label, value in raw.items():
-        if label in LABEL_MAP:
-            key, fn = LABEL_MAP[label]
-            try:
-                mapped[key] = fn(value)
-            except Exception:
-                mapped[key] = value
 
-    from datetime import date
-    today_str = date.today().strftime('%Y-%m-%d')
-
+def _build_bond_json(isin: str, mapped: dict, last_price=None, default_market: str = 'MOT') -> dict:
+    from datetime import date as _date
+    today_str = _date.today().strftime('%Y-%m-%d')
     denomination = mapped.get('denomination', isin)
     maturity_date = mapped.get('maturity_date', '')
     issue_date = mapped.get('issue_date', '')
@@ -1444,13 +1357,12 @@ async def fetch_asset_web(isin: str, source: str = 'borsa_italiana_mot'):
         round(fixed_coupon_rate / _freq_div.get(coupon_frequency, 1), 8)
         if isinstance(fixed_coupon_rate, float) else None
     )
-
     result = {
         'par': mapped.get('par', 100),
         'isin': isin,
         'model': 'bond',
         'issuer': mapped.get('issuer', ''),
-        'market': mapped.get('market', 'MOT'),
+        'market': mapped.get('market', default_market),
         'calendar': 'TARGET',
         'currency': mapped.get('currency', 'EUR'),
         'lot_size': mapped.get('lot_size', 1),
@@ -1489,9 +1401,132 @@ async def fetch_asset_web(isin: str, source: str = 'borsa_italiana_mot'):
         'interest_commencement_date': first_coupon_date,
         '_code': isin,
     }
+    if last_price is not None:
+        result['last_price'] = last_price
+    return result
 
-    if not maturity_date:
-        raise HTTPException(status_code=422, detail=f'Could not parse bond data for {isin} — check the ISIN or the page structure.')
+
+# ---------------------------------------------------------------------------
+# Source-specific scrapers
+# ---------------------------------------------------------------------------
+
+def _scrape_borsa_italiana(isin: str, soup) -> tuple:
+    """Return (mapped_dict, last_price) from a Borsa Italiana scheda page."""
+
+    def _map_freq(s):
+        return {'semestrale': 'Semiannual', 'annuale': 'Annual', 'annua': 'Annual',
+                'trimestrale': 'Quarterly', 'mensile': 'Monthly', 'bimestrale': 'Bimonthly'}.get(s.strip().lower(), s)
+
+    def _map_coupon(s):
+        return {'fisso': 'fixed', 'variabile': 'floating', 'zero coupon': 'zero_coupon', 'misto': 'mixed'}.get(s.strip().lower(), 'fixed')
+
+    def _map_dc(s):
+        return {'act/act': 'Actual/Actual (Period Basis)', 'act/365': 'Actual365Fixed',
+                '30/360': '30/360', '30e/360': '30E/360'}.get(s.strip().upper(), s)
+
+    LABEL_MAP = {
+        'nome': ('denomination', str), 'denominazione': ('denomination', str),
+        'isin': ('isin', str), 'emittente': ('issuer', str),
+        'data di emissione': ('issue_date', _parse_date_any), 'data emissione': ('issue_date', _parse_date_any),
+        'data di scadenza': ('maturity_date', _parse_date_any), 'scadenza': ('maturity_date', _parse_date_any),
+        'data di godimento': ('interest_commencement_date', _parse_date_any),
+        'godimento': ('interest_commencement_date', _parse_date_any),
+        'primo giorno di negoziazione': ('first_day_of_trading', _parse_date_any),
+        'cedola': ('fixed_coupon_rate', _parse_rate_any), 'tasso cedola': ('fixed_coupon_rate', _parse_rate_any),
+        'tasso': ('fixed_coupon_rate', _parse_rate_any),
+        'frequenza cedola': ('coupon_frequency', _map_freq), 'frequenza': ('coupon_frequency', _map_freq),
+        'taglio minimo': ('lot_size', _parse_number_any), 'lotto minimo': ('lot_size', _parse_number_any),
+        'valore nominale': ('par', _parse_number_any),
+        'ammontare in circolazione': ('outstanding', _parse_number_any), 'outstanding': ('outstanding', _parse_number_any),
+        'valuta': ('currency', str),
+        'convenzione calcolo interessi': ('accrual_day_count', _map_dc),
+        'convenzione di calcolo': ('accrual_day_count', _map_dc),
+        'mercato': ('market', str),
+        'clearing': ('clearing_settlement', str), 'clearing / settlement': ('clearing_settlement', str),
+        'tipo cedola': ('coupon_structure', _map_coupon), 'tipo di cedola': ('coupon_structure', _map_coupon),
+        'garanzia': ('guarantor', str), 'garante': ('guarantor', str),
+        'prezzo di emissione': ('issue_price', _parse_number_any), 'prezzo emissione': ('issue_price', _parse_number_any),
+        'seniority': ('seniority', str), 'tipologia': ('typology', str), 'tipo': ('typology', str),
+        # last price variants
+        'ultimo': ('last_price', _parse_number_any),
+        'ultimo prezzo': ('last_price', _parse_number_any),
+        'prezzo': ('last_price', _parse_number_any),
+        'quotazione': ('last_price', _parse_number_any),
+    }
+
+    raw = _extract_kv(soup)
+
+    # Also scan standalone price box (e.g. <span class="price">, header price areas)
+    for tag in soup.find_all(['span', 'div', 'strong', 'b'],
+                              class_=lambda c: c and any(x in c.lower() for x in ['price', 'prezzo', 'ultimo', 'quot'])):
+        text = tag.get_text(strip=True).replace(',', '.')
+        try:
+            v = float(text)
+            if 10 <= v <= 200:
+                raw.setdefault('ultimo', tag.get_text(strip=True))
+                break
+        except ValueError:
+            pass
+
+    mapped = {}
+    for label, value in raw.items():
+        if label in LABEL_MAP:
+            key, fn = LABEL_MAP[label]
+            try:
+                mapped[key] = fn(value)
+            except Exception:
+                mapped[key] = value
+
+    last_price = mapped.pop('last_price', None)
+    return mapped, last_price
+
+
+
+
+# ---------------------------------------------------------------------------
+# Main endpoint
+# ---------------------------------------------------------------------------
+
+@app.get('/fetch_asset_web', tags=['Assets'], summary='Scrape bond data from a registered web source and save it')
+async def fetch_asset_web(isin: str, source: str = 'borsa_italiana_mot'):
+    from bs4 import BeautifulSoup
+    import asyncio
+
+    if source not in WEB_SOURCES:
+        raise HTTPException(status_code=400, detail=f"Unknown source '{source}'. Available: {list(WEB_SOURCES.keys())}")
+
+    isin = isin.strip().upper()
+    url = WEB_SOURCES[source].format(isin=isin)
+
+    print(f'[fetch_asset_web] GET {url}')
+    loop = asyncio.get_event_loop()
+    try:
+        resp = await loop.run_in_executor(None, lambda: _scrape_fetch(url))
+    except requests.exceptions.ConnectionError as e:
+        raise HTTPException(status_code=502, detail=f'Connection error: {e} — URL: {url}')
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=502, detail=f'Timeout — URL: {url}')
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f'Unexpected error: {e} — URL: {url}')
+
+    print(f'[fetch_asset_web] HTTP {resp.status_code} — {url}')
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail=f'ISIN {isin} not found on {source} (HTTP 404) — URL: {url}')
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f'{source} returned HTTP {resp.status_code} — URL: {url}')
+
+    soup = BeautifulSoup(resp.text, 'lxml')
+
+    if source.startswith('borsa_italiana'):
+        mapped, last_price = _scrape_borsa_italiana(isin, soup)
+        default_market = 'MOT'
+    else:
+        raise HTTPException(status_code=400, detail=f"No scraper implemented for source '{source}'.")
+
+    result = _build_bond_json(isin, mapped, last_price=last_price, default_market=default_market)
+
+    if not result.get('maturity_date'):
+        raise HTTPException(status_code=422, detail=f'Could not parse bond data for {isin} — check the ISIN or page structure. URL: {url}')
 
     saved = await _save_asset_data(result)
     print(f'[fetch_asset_web] Saved {isin} from {source}: {saved}')

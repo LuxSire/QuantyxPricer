@@ -2,9 +2,9 @@
   "instrument_id": "XS2148370211",
   "model": "bond",
   "description": "Bank of America Sr Unsec Fixed Rate Bond",
-  "evaluation_date": "08-06-2026",
-  "issue_date": "31-03-2020",
-  "maturity_date": "31-03-2029",
+  "evaluation_date": "2026-06-08",
+  "issue_date": "2020-03-31",
+  "maturity_date": "2029-03-31",
   "calendar": "TARGET",
   "accrual_day_count": "Actual360",
   "business_day_convention": "ModifiedFollowing",
@@ -25,5 +25,7 @@
   "seniority": "Senior Unsecured",
   "day_count_convention": "30/360",
   "issue_price": 100.0,
-  "final_coupon_date": "31-03-2029"
+  "final_coupon_date": "31-03-2029",
+  "target_price": 100,
+  "asset_type": "bond"
 }

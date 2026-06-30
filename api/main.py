@@ -813,7 +813,7 @@ async def fetch_prices_cbonds():
 
 
 @app.get('/fetch_curves', tags=['Pricing'], summary='Return swap curves from DB')
-async def fetch_curves_endpoint():
+async def fetch_curves():
     try:
         return db.select_curves()
     except Exception as e:

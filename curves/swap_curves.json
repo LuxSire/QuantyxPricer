@@ -1,7 +1,8 @@
 [
   {
     "curve_name": "EUR_OIS",
-    "as_of": "2026-06-11",
+    "as_of": "2026-06-29",
+    "curve_type": "ois",
     "day_count": "Actual365Fixed",
     "ecb_name": "EST/B.EU000A2X2A25.WT",
     "calendar": "TARGET",
@@ -9,13 +10,13 @@
     "pillars": [
       {
         "tenor": "ON",
-        "rate": 0.01931,
-        "source": "ECB SDW EST/B.EU000A2X2A25.WT (2026-06-11)"
+        "rate": 0.02182,
+        "source": "ECB SDW EST/B.EU000A2X2A25.WT (2026-06-29)"
       },
       {
         "tenor": "1M",
         "rate": 0.01935,
-        "source": "off €STR near-flat front end"
+        "source": "off \u20acSTR near-flat front end"
       },
       {
         "tenor": "3M",
@@ -44,7 +45,7 @@
       },
       {
         "tenor": "5Y",
-        "rate": 0.0220,
+        "rate": 0.022,
         "source": "public"
       },
       {
@@ -77,6 +78,7 @@
   {
     "curve_name": "USD_OIS",
     "as_of": "2018-04-03",
+    "curve_type": "ois",
     "day_count": "Actual365Fixed",
     "fed_name": "SOFR",
     "calendar": "UnitedStates",
@@ -151,6 +153,7 @@
   },
   {
     "curve_name": "EUR_FWD_6M",
+    "curve_type": "forward",
     "as_of": "2026-05-01",
     "day_count": "Actual360",
     "ebc_name": "FM/M.U2.EUR.RT.MM.EURIBOR6MD_.HSTA",
@@ -160,7 +163,7 @@
     "pillars": [
       {
         "tenor": "6M",
-        "rate": 0.025364,
+        "rate": 2.5364,
         "source": "ECB SDW FM/M.U2.EUR.RT.MM.EURIBOR6MD_.HSTA (2026-05-01)"
       },
       {
@@ -198,6 +201,7 @@
   {
     "curve_name": "USD_FWD_3M",
     "as_of": "2026-06-08",
+    "curve_type": "forward",
     "day_count": "Actual360",
     "calendar": "UnitedStates",
     "compounding": "Simple",
@@ -247,6 +251,7 @@
   },
   {
     "curve_name": "EUR_CMS_10Y_SWAP",
+    "curve_type": "swap",
     "as_of": "2026-06-08",
     "day_count": "Actual365Fixed",
     "calendar": "TARGET",
@@ -297,6 +302,7 @@
   },
   {
     "curve_name": "EUR_SWPTN_VOL_SURFACE",
+    "curve_type": "volatility",
     "as_of": "2026-06-08",
     "volatility_type": "lognormal",
     "quote_type": "atm_normalized",
@@ -342,6 +348,7 @@
   {
     "curve_name": "EURUSD_FX_SPOT_AND_FORWARD",
     "as_of": "2026-05-01",
+    "curve_type": "fx",
     "base_currency": "EUR",
     "ecb_name": "EXR/M.USD.EUR.SP00.A",
     "quote_currency": "USD",
@@ -399,6 +406,7 @@
   },
   {
     "curve_name": "EURUSD_XCCY_BASIS",
+    "curve_type": "basis",
     "as_of": "2026-06-09",
     "day_count": "Actual360",
     "calendar": "TARGET+UnitedStates",
@@ -459,6 +467,7 @@
   },
   {
     "curve_name": "ISTAT_CPI_INFLATION",
+    "curve_type": "inflation",
     "as_of": "2026-06-08",
     "index": "ISTAT CPI",
     "day_count": "Actual365Fixed",
@@ -515,6 +524,7 @@
   },
   {
     "curve_name": "IDN_CDS",
+    "curve_type": "cds",
     "as_of": "2026-06-08",
     "quote_type": "cds_spreads",
     "reference_entity": "Republic of Indonesia",
@@ -567,6 +577,7 @@
   },
   {
     "curve_name": "BRA_CDS",
+    "curve_type": "cds",
     "as_of": "2026-06-09",
     "quote_type": "cds_spreads",
     "reference_entity": "Republic of Brazil",
@@ -596,6 +607,7 @@
     "as_of": "2026-06-11",
     "day_count": "Actual365Fixed",
     "saron_name": "SARON",
+    "curve_type": "ois",
     "calendar": "TARGET",
     "compounding": "Annual",
     "pillars": [
@@ -668,6 +680,7 @@
   },
   {
     "curve_name": "CHF_FWD_6M",
+    "curve_type": "forward",
     "as_of": "2026-06-08",
     "day_count": "Actual360",
     "calendar": "TARGET",
@@ -708,6 +721,342 @@
         "tenor": "10Y",
         "rate": 0.0064,
         "source": "public CHFIBOR 10Y proxy"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_ITALY_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "TARGET",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Italy",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 28.41,
+        "source": "investing.com world-cds 'Italy CDS 5 Years' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_FRANCE_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "TARGET",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "France",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 28.24,
+        "source": "investing.com world-cds 'France CDS 5 Years' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_GERMANY_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "TARGET",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Germany",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 7.27,
+        "source": "investing.com world-cds 'Germany CDS 5 Year' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_SPAIN_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "TARGET",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Spain",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 15.12,
+        "source": "investing.com world-cds 'Spain CDS 5 Years' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_USA_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "UnitedStates",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "US",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 38.21,
+        "source": "investing.com world-cds 'US CDS 5 Years' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_TURKEY_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Turkey",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 220.1,
+        "source": "investing.com world-cds 'Turkey CDS 5 Years' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_UK_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "UK",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 17.88,
+        "source": "investing.com world-cds 'UK CDS 5 Years' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_BRAZIL_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Brazil",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 126.55,
+        "source": "investing.com world-cds 'Brazil CDS 5 Years' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_CANADA_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Canada",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 39.6,
+        "source": "investing.com world-cds 'Canada CDS 5 Years' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_MEXICO_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Mexico",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 86.87,
+        "source": "investing.com world-cds 'Mexico CDS 5 Years' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_ISRAEL_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Israel",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 54.92,
+        "source": "investing.com world-cds 'Israel CDS 5 Year' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_EGYPT_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Egypt",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 280.46,
+        "source": "investing.com world-cds 'Egypt CDS 5 Years' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_CHINA_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "China",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 37.6,
+        "source": "investing.com world-cds 'China CDS 5 Years' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_INDONESIA_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Indonesia",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 89.79,
+        "source": "investing.com world-cds 'Indonesia CDS 5 Years' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_INDIA_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "India",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 87.67,
+        "source": "investing.com world-cds 'India CDS 5 Year' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_SAUDI_ARABIA_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Saudi Arabia",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 59.58,
+        "source": "investing.com world-cds 'Saudi Arabia CDS 5 Year' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_JAPAN_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Japan",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 27.15,
+        "source": "investing.com world-cds 'Japan CDS 5 Year' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_SWITZERLAND_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Switzerland",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 6.76,
+        "source": "investing.com world-cds 'Switzerland CDS 5 Year' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_SOUTH_KOREA_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "South Korea",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 22.4,
+        "source": "investing.com world-cds 'South Korea CDS 5 Year' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_SOUTH_AFRICA_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "South Africa",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 125.38,
+        "source": "investing.com world-cds 'South Africa CDS 5 Year' (2026-06-30)"
+      }
+    ]
+  },
+  {
+    "curve_name": "CDS_AUSTRALIA_5Y",
+    "curve_type": "cds",
+    "as_of": "2026-06-30",
+    "day_count": "Actual360",
+    "calendar": "NullCalendar",
+    "recovery_rate": 0.4,
+    "investing_cds_name": "Australia",
+    "pillars": [
+      {
+        "tenor": "5Y",
+        "rate": 14.05,
+        "source": "investing.com world-cds 'Australia CDS 5 Years' (2026-06-30)"
       }
     ]
   }

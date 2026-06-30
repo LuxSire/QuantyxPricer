@@ -3,6 +3,7 @@ import { formatNumberForDisplay, isPercentageKey } from './helper'
 import { useAsset } from './hooks/useAsset'
 import { usePrices } from './hooks/usePrices'
 import DataChart from './components/DataChart'
+import CurveChart from './components/CurveChart'
 
 export default function Instrument({ instrumentId, apiBase = '' }) {
   // instrumentId may be encoded as "ID::bond_file.json" from the table link
@@ -169,6 +170,14 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
   const sensitivityData = (priceResult?.sensitivity || [])
     .filter(s => Number.isFinite(s.spread_bp) && Number.isFinite(s.pv_note_pct))
     .map(s => ({ x: s.spread_bp, y: s.pv_note_pct }))
+
+  const irCurveName = data?.ir_curve || data?.discount_curve_name || ''
+  const irCurveObj = irCurveName
+    ? curves.find(c => c.curve_name === irCurveName)
+    : null
+  const curveChartData = (irCurveObj?.pillars || [])
+    .filter(p => p.tenor != null && p.rate != null)
+    .map(p => ({ tenor: p.tenor, rate: parseFloat(p.rate) * 100 }))
 
 
   const renderValue = (k, v) => {
@@ -521,12 +530,44 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
     <div>
       <a href="#" onClick={(e)=>{e.preventDefault(); window.location.hash=''}}>&larr; Back</a>
       <div style={{ marginTop: 10, marginBottom: 8, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-        <button className="clear-btn clear-btn--termsheet" onClick={openTermsheet}>Termsheet</button>
-        <button className="clear-btn clear-btn--report" onClick={openReport}>Report</button>
+        <button className="clear-btn clear-btn--termsheet" onClick={openTermsheet} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          Termsheet
+        </button>
+        <button className="clear-btn clear-btn--report" onClick={openReport} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+          Report
+        </button>
         <button
           className="clear-btn clear-btn--api"
           onClick={() => { window.location.hash = `#/bond_data/${isin}` }}
-        >Web</button>
+          style={{ display: 'flex', alignItems: 'center', gap: 5 }}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          Web
+        </button>
+        {(() => {
+          const MODEL_DOCS = { spire: 'spire.pdf', index_linked: 'index_linked.pdf', inflation_linked: 'inflation_linked.pdf', cln: 'cln.pdf' }
+          const docFile = MODEL_DOCS[data?.model]
+          return docFile ? (
+            <button
+              className="clear-btn"
+              style={{ background: '#6b7280', borderColor: '#6b7280', color: '#fff', display: 'flex', alignItems: 'center', gap: 5 }}
+              onClick={() => window.open(`${import.meta.env.BASE_URL}assets/docs/${docFile}`, '_blank')}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="12" y2="14"/><rect x="8" y="17" width="8" height="3" rx="1"/></svg>
+              Model
+            </button>
+          ) : null
+        })()}
+        <button
+          style={{ background: '#fff', color: '#1e293b', border: '1px solid #cbd5e1', borderRadius: 4, padding: '4px 12px', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}
+          onClick={() => window.print()}
+          title="Print page as PDF"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          Print
+        </button>
         <button
           className="clear-btn"
           disabled={pricingSingle || editMode}
@@ -535,11 +576,16 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
             await pricing_single_asset(isin, setSnack)
             setPricingSingle(false)
           }}
+          style={{ display: 'flex', alignItems: 'center', gap: 5 }}
         >
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           {pricingSingle ? 'Pricing...' : 'Price'}
         </button>
         {!editMode ? (
-          <button className="clear-btn" onClick={startEdit}>Edit</button>
+          <button className="clear-btn" onClick={startEdit} style={{ display: 'flex', alignItems: 'center', gap: 5, background: '#7c3aed', borderColor: '#7c3aed', color: '#fff' }}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            Edit
+          </button>
         ) : (
           <>
             <button className="clear-btn" onClick={saveEdit} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
@@ -547,6 +593,7 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
           </>
         )}
       </div>
+      <div id="instrument-print-area">
       <h2>{(data.description ? (data.description.length > 100 ? data.description.slice(0, 99) + '…' : data.description) : instrumentId)}</h2>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
 
@@ -633,7 +680,10 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
           {/* Price Result */}
           {priceResult && (() => {
             const pp = priceResult.price_pct || {}
+            const callProb = priceResult.call_probability
             const entries = [
+              ['pv_note',                pp.pv_note ?? priceResult.pv_note],
+              ['ytm',                    priceResult.ytm],
               ['selected_npv',           priceResult.selected_npv],
               ['valuation_mode',         priceResult.valuation_mode],
               ['spread_bp',              priceResult.spread_bp],
@@ -642,6 +692,7 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
               ['pv_to_maturity',         pp.pv_note_to_maturity],
               ['model_ytm_to_maturity',  priceResult.model_ytm_to_maturity],
               ['model_ytc_to_first_call',priceResult.model_ytc_to_first_call],
+              ['call_probability',       callProb != null ? callProb : undefined],
             ].filter(([, v]) => v != null)
             return (
               <div style={{ background: '#0d1a27', border: '1px solid #1a2d44', borderRadius: 6, overflow: 'hidden' }}>
@@ -651,7 +702,7 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
                 <table style={{ borderCollapse: 'collapse' }}>
                   <tbody>
                     {entries.map(([k, v]) => {
-                      const isPct = k === 'model_ytm_to_maturity' || k === 'model_ytc_to_first_call'
+                      const isPct = k === 'model_ytm_to_maturity' || k === 'model_ytc_to_first_call' || k === 'ytm' || k === 'call_probability'
                       const display = typeof v === 'number'
                         ? isPct ? formatNumberForDisplay(v, { scale: 100, suffix: '%' }) : formatNumberForDisplay(v)
                         : String(v)
@@ -668,12 +719,61 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
             )
           })()}
 
+          {/* Sensitivity */}
+          {priceResult?.sensitivity?.length > 0 && (() => {
+            const raw = priceResult.sensitivity
+            const cols = Object.keys(raw[0]).filter(k => k !== 'pv_note_pct' && k !== 'spread_bp')
+            return (
+              <div style={{ background: '#0d1a27', border: '1px solid #1a2d44', borderRadius: 6, overflow: 'hidden' }}>
+                <div style={{ padding: '6px 10px', background: '#0b1520', borderBottom: '1px solid #1a2d44' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#fb923c', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Sensitivity</span>
+                </div>
+                <table style={{ borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #1a2d44' }}>
+                      <th style={{ padding: '4px 10px', fontSize: 10, color: '#4a5568', fontWeight: 600, background: '#0c1520', textAlign: 'right' }}>spread_bp</th>
+                      <th style={{ padding: '4px 10px', fontSize: 10, color: '#4a5568', fontWeight: 600, background: '#0c1520', textAlign: 'right' }}>pv_note_pct</th>
+                      {cols.map(c => <th key={c} style={{ padding: '4px 10px', fontSize: 10, color: '#4a5568', fontWeight: 600, background: '#0c1520', textAlign: 'right' }}>{c}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {raw.map((s, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid #1a2535' }}>
+                        <td style={{ padding: '4px 10px', fontSize: 11, color: '#e6eef6', fontFamily: 'monospace', textAlign: 'right' }}>{s.spread_bp}</td>
+                        <td style={{ padding: '4px 10px', fontSize: 11, color: '#e6eef6', fontFamily: 'monospace', textAlign: 'right' }}>{typeof s.pv_note_pct === 'number' ? s.pv_note_pct.toFixed(4) : s.pv_note_pct}</td>
+                        {cols.map(c => <td key={c} style={{ padding: '4px 10px', fontSize: 11, color: '#e6eef6', fontFamily: 'monospace', textAlign: 'right' }}>{typeof s[c] === 'number' ? s[c].toFixed(4) : String(s[c] ?? '')}</td>)}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          })()}
+
         </div>
 
-        <div style={{ width: 380, height: 300 }}>
-          <DataChart data={sensitivityData} />
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ background: '#0d1a27', border: '1px solid #1a2d44', borderRadius: 6, overflow: 'hidden', flex: '1 1 360px' }}>
+            <div style={{ padding: '6px 10px', background: '#0b1520', borderBottom: '1px solid #1a2d44' }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: '#60a5fa', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Sensitivity</span>
+            </div>
+            <div style={{ height: 280 }}>
+              <DataChart data={sensitivityData} />
+            </div>
+          </div>
+          {curveChartData.length > 0 && (
+            <div style={{ background: '#0d1a27', border: '1px solid #1a2d44', borderRadius: 6, overflow: 'hidden', flex: '1 1 360px' }}>
+              <div style={{ padding: '6px 10px', background: '#0b1520', borderBottom: '1px solid #1a2d44' }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#34d399', textTransform: 'uppercase', letterSpacing: '0.08em' }}>IR Curve — {irCurveName}</span>
+              </div>
+              <div style={{ height: 280 }}>
+                <CurveChart data={curveChartData} curveName="" />
+              </div>
+            </div>
+          )}
         </div>
       </div>
+      </div>{/* instrument-print-area */}
       {editMode && <div style={{ background: '#0d1a27', border: '1px solid #1a2d44', borderRadius: 6, overflow: 'hidden', marginTop: 4 }}>
         <div style={{ padding: '6px 10px', background: '#0b1520', borderBottom: '1px solid #1a2d44' }}>
           <span style={{ fontSize: 10, fontWeight: 700, color: '#9aa6b2', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Fields</span>

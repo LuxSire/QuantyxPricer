@@ -248,10 +248,16 @@ def _price_with_curve(curve, bond_data: Dict[str, Any], curve_json=None):
 
     result['ytm_promised'] = ytm_promised
     result['ytm_expected'] = ytm_expected
-    # write canonical 'ytm' as requested (expected)
     result['ytm'] = ytm_expected
-    # CLN currently has no issuer call schedule, so YTC is not applicable.
     result['ytc'] = None
+    pv_note_pct = float(npv) / par * 100.0
+    result['pv_note'] = pv_note_pct
+    result['price_pct'] = {
+        'pv_note':               pv_note_pct,
+        'pv_note_to_maturity':   pv_note_pct,
+        'pv_note_to_worst_call': pv_note_pct,
+        'pv_note_to_first_call': pv_note_pct,
+    }
     return result
 
 

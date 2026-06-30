@@ -185,16 +185,23 @@ def _accrued_coupon(bond_data, schedule, eval_date, settlement_date, day_count, 
 # ---------------------------------------------------------------------------
 
 def price_sensitivity(bond_data, curve_json, n_steps=2, step_pct=0.10):
-    base = normalize_rate(bond_data.get('annual_inflation_rate', 0.0))
-    if base == 0.0:
-        return []
+    """Return a vector of {spread_bp, pv_note_pct} at 2×n_steps+1 credit-spread levels.
+
+    The base spread (credit_spread_bp / issuer_spread_bp) is the centre.
+    Each step shifts by step_pct × base (default 10%), matching the pattern used by
+    spire.py and hullwhite.py so the sensitivity chart is comparable across models.
+    """
+    base_spread = float(
+        bond_data.get('credit_spread_bp') or
+        bond_data.get('issuer_spread_bp') or
+        0.0
+    )
     multipliers = [1.0 + (i - n_steps) * step_pct for i in range(2 * n_steps + 1)]
     sensitivity = []
     for m in multipliers:
-        level = round(base * m, 8)
-        d = {**bond_data, 'annual_inflation_rate': level}
-        r = price_asset(d, curve_json, _skip_sensitivity=True)
-        sensitivity.append({'spread_bp': round(level * 100, 6), 'pv_note_pct': r['price_pct']['pv_note']})
+        level = round(base_spread * m, 6)
+        r = price_asset(bond_data, curve_json, issuer_spread_bp=level, _skip_sensitivity=True)
+        sensitivity.append({'spread_bp': level, 'pv_note_pct': r['price_pct']['pv_note']})
     return sensitivity
 
 

@@ -177,7 +177,7 @@ export default function Settings({ apiBase }) {
 
         {/* Tabs */}
         <div style={{ display: 'flex', borderBottom: '1px solid #334155', marginBottom: 28 }}>
-          {['models', 'users'].map(tab => (
+          {[['models', 'Models'], ['users', 'Users'], ['docs', 'Docs']].map(([tab, label]) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -186,10 +186,10 @@ export default function Settings({ apiBase }) {
                 background: 'transparent', fontSize: 14, fontWeight: 600,
                 color: activeTab === tab ? '#facc15' : '#64748b',
                 borderBottom: activeTab === tab ? '2px solid #facc15' : '2px solid transparent',
-                textTransform: 'capitalize', transition: 'color 0.15s',
+                transition: 'color 0.15s',
               }}
             >
-              {tab === 'models' ? 'Models' : 'Users'}
+              {label}
             </button>
           ))}
         </div>
@@ -221,6 +221,38 @@ export default function Settings({ apiBase }) {
                 </tbody>
               </table>
             )}
+          </div>
+        )}
+
+        {/* Docs tab */}
+        {activeTab === 'docs' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {[
+              { name: 'QP Overview', file: 'QP_overview.pdf' },
+              { name: 'QP Technicals', file: 'QP_Technicals.pdf' },
+            ].map(({ name, file }) => (
+              <a
+                key={file}
+                href={`${import.meta.env.BASE_URL}docs/${file}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ textDecoration: 'none' }}
+              >
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 14,
+                  padding: '14px 18px', borderRadius: 8,
+                  background: '#0d1a27', border: '1px solid #1a2d44',
+                  transition: 'border-color 0.15s',
+                }}>
+                  <span style={{ fontSize: 22, lineHeight: 1 }}>📄</span>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: '#e6eef6' }}>{name}</div>
+                    <div style={{ fontSize: 11, color: '#4a5568', marginTop: 2 }}>{file}</div>
+                  </div>
+                  <span style={{ marginLeft: 'auto', fontSize: 12, color: '#4a5568' }}>Open ↗</span>
+                </div>
+              </a>
+            ))}
           </div>
         )}
 

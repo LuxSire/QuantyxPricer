@@ -30,6 +30,7 @@ try:
         ASSETS_DIR,
         BOND_FILE,
         CURVE_FILE,
+        amount_to_pct,
         build_discount_curve,
         get_bond_files,
         get_business_day_convention,
@@ -42,6 +43,7 @@ except ModuleNotFoundError:
         ASSETS_DIR,
         BOND_FILE,
         CURVE_FILE,
+        amount_to_pct,
         build_discount_curve,
         get_bond_files,
         get_business_day_convention,
@@ -184,17 +186,34 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
     bond = build_callable_bond(bond_data, base_curve, evaluation_date)
     bond.setPricingEngine(engine)
 
+    npv = bond.NPV()
+    clean = bond.cleanPrice()
+    dirty = bond.dirtyPrice()
+    pv_note_pct = amount_to_pct(clean, bond_data)
+    has_calls = bool(bond_data.get('call_dates'))
+    valuation_mode = 'to_first_call' if has_calls else 'to_maturity'
+
     return {
-        'npv': bond.NPV(),
-        'clean_price': bond.cleanPrice(),
-        'dirty_price': bond.dirtyPrice(),
+        'npv': npv,
+        'selected_npv': npv,
+        'pv_note': pv_note_pct,
+        'valuation_mode': valuation_mode,
+        'spread_bp': issuer_spread_bp,
+        'clean_price': clean,
+        'dirty_price': dirty,
         'accrued_amount': bond.accruedAmount(),
         'issuer_spread_bp': issuer_spread_bp,
         'model_a': model_a,
         'model_sigma': model_sigma,
         'tree_steps': tree_steps,
         'evaluation_date': evaluation_date.ISO(),
-        'bond': bond,
+        'call_probability': None,
+        'price_pct': {
+            'pv_note':               pv_note_pct,
+            'pv_note_to_maturity':   pv_note_pct,
+            'pv_note_to_worst_call': pv_note_pct,
+            'pv_note_to_first_call': pv_note_pct,
+        },
     }
 
 

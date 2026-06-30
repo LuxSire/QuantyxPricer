@@ -100,8 +100,9 @@ def _price_with_curve(note_data, curve, curve_day_count,
 
     notional     = float(note_data.get('note_notional', 100_000_000.0))
     coupon_rate  = float(note_data['fixed_coupon_rate'])
-    spread_bp    = float(note_data.get('credit_spread_bp', 0.0)) + float(
-        note_data.get('collateral_spread_bp') or note_data.get('collateral_spread') or 0.0
+    _csb = note_data.get('collateral_spread_bp')
+    spread_bp = float(note_data.get('credit_spread_bp', 0.0)) + (
+        float(_csb) if _csb is not None else float(note_data.get('collateral_spread') or 0.0)
     )
 
     dates         = build_note_dates(note_data)
@@ -335,31 +336,61 @@ def _price_with_curve(note_data, curve, curve_day_count,
     }
 
 
+def _cds_flat_spread_bp(cds_curve_name, curve_json):
+    """Return the flat CDS spread in basis points from the named curve.
+
+    Pillar rates in CDS curves are stored in basis points.
+    Uses a simple average across pillars; flat-extends beyond the last tenor.
+    Returns 0.0 if the curve is not found or has no pillars.
+    """
+    if not cds_curve_name:
+        return 0.0
+    curves = curve_json if isinstance(curve_json, list) else [curve_json]
+    for c in curves:
+        if c.get('curve_name') == cds_curve_name:
+            pillars = c.get('pillars', [])
+            if not pillars:
+                return 0.0
+            rates = [float(p.get('rate', 0.0)) for p in pillars]
+            return sum(rates) / len(rates)
+    return 0.0
+
+
 def price_sensitivity(note_data, curve_json, n_steps=2, step_pct=0.10):
     """Return a vector of {spread_bp, pv_note_pct} at 2×n_steps+1 spread levels.
 
-    The base spread (credit_spread_bp + collateral_spread_bp) is the centre.
-    Each step shifts by step_pct × base (default 10%), so with n_steps=2 the
-    levels are base × {0.80, 0.90, 1.00, 1.10, 1.20}.
+    The base spread (credit_spread_bp + collateral_spread_bp + cds_spread) is
+    the centre.  Each step shifts by step_pct × base_credit (default 10%), so
+    with n_steps=2 the levels are base × {0.80, 0.90, 1.00, 1.10, 1.20}.
+    The reported spread_bp is the total effective spread (CDS + Citi/issuer).
     """
-    base_spread = float(note_data.get('credit_spread_bp', 0.0)) + float(
+    cds_spread_bp = _cds_flat_spread_bp(note_data.get('cds_curve'), curve_json)
+    base_credit = float(note_data.get('credit_spread_bp', 0.0)) + float(
         note_data.get('collateral_spread_bp') or note_data.get('collateral_spread') or 0.0
     )
     multipliers = [1.0 + (i - n_steps) * step_pct for i in range(2 * n_steps + 1)]
     sensitivity = []
     for m in multipliers:
-        level = round(base_spread * m, 6)
-        d = {**note_data, 'credit_spread_bp': level, 'collateral_spread_bp': 0.0}
+        credit_level = round(base_credit * m, 6)
+        d = {**note_data, 'credit_spread_bp': credit_level, 'collateral_spread_bp': 0.0}
         r = price_asset(d, curve_json, _skip_sensitivity=True)
         sensitivity.append({
-            'spread_bp':    level,
-            'pv_note_pct':  r['price_pct']['pv_note'],
+            'spread_bp':   round(credit_level + cds_spread_bp, 6),
+            'pv_note_pct': r['price_pct']['pv_note'],
         })
     return sensitivity
 
 
 def price_asset(note_data, curve_json, _skip_sensitivity=False):
     evaluation_date = parse_date(note_data['evaluation_date'])
+
+    # Stack Germany (sovereign) CDS spread on top of the issuer credit_spread_bp.
+    # note_data (original) is passed to price_sensitivity so it adds cds_spread once.
+    cds_spread_bp = _cds_flat_spread_bp(note_data.get('cds_curve'), curve_json)
+    nd = ({
+        **note_data,
+        'credit_spread_bp': float(note_data.get('credit_spread_bp', 0.0)) + cds_spread_bp,
+    } if cds_spread_bp else note_data)
 
     note_curve_cfg,       note_curve_name       = select_note_curve(note_data, curve_json)
     collateral_curve_cfg, collateral_curve_name = select_collateral_curve(note_data, curve_json)
@@ -369,18 +400,18 @@ def price_asset(note_data, curve_json, _skip_sensitivity=False):
     note_notional = float(note_data.get('note_notional', 100_000_000.0))
     issue_price   = float(note_data.get('issue_price', 100.0))
 
-    note_leg      = _price_with_curve(note_data, note_curve, note_curve_day_count,
+    note_leg      = _price_with_curve(nd, note_curve, note_curve_day_count,
                                        collateral_curve=collateral_curve,
                                        collateral_curve_day_count=collateral_curve_day_count)
-    collateral_leg = model_collateral_pv(note_data['collateral'], collateral_curve, collateral_curve_day_count)
-    adjustments    = compute_valuation_adjustments(note_data, note_curve, note_curve_day_count)
+    collateral_leg = model_collateral_pv(nd['collateral'], collateral_curve, collateral_curve_day_count)
+    adjustments    = compute_valuation_adjustments(nd, note_curve, note_curve_day_count)
 
-    collateral_repo = note_data.get('collateral_repo', {}) or {}
+    collateral_repo = nd.get('collateral_repo', {}) or {}
     if collateral_repo.get('is_repo_financed') and collateral_repo.get('repo_purchase_price_pct') is not None:
-        principal = float(note_data.get('collateral', {}).get('principal_amount', note_notional))
+        principal = float(nd.get('collateral', {}).get('principal_amount', note_notional))
         collateral_leg['pv_collateral'] = principal * float(collateral_repo['repo_purchase_price_pct']) / 100.0
 
-    swap_cfg  = note_data.get('swap', {})
+    swap_cfg  = nd.get('swap', {})
     swap_mode = swap_cfg.get('mode', 'calibration_residual')
     if swap_mode in {'calibration_residual', 'explicit_cashflows'}:
         pv_swap = note_leg['pv_note'] - collateral_leg['pv_collateral'] + adjustments['pv_total_adjustments']
@@ -395,6 +426,8 @@ def price_asset(note_data, curve_json, _skip_sensitivity=False):
         'evaluation_date':              evaluation_date.ISO(),
         'note_discount_curve_name':     note_curve_name,
         'collateral_discount_curve_name': collateral_curve_name,
+        'cds_curve_name':               note_data.get('cds_curve', ''),
+        'cds_spread_bp':                cds_spread_bp,
         'valuation_mode':               note_leg.get('valuation_mode', note_data.get('valuation_mode', 'to_maturity')),
         'selected_call_date':           note_leg.get('selected_call_date', parse_date(note_data['maturity_date']).ISO()),
         'issue_price':                  issue_price,

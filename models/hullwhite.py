@@ -798,8 +798,15 @@ def _price_with_curve(curve, asset, curve_json=None, discount_curve_name=None):
     else:
         raise ValueError(f'Unsupported valuation_mode: {valuation_mode}')
 
+    par = float(bond_data.get('par', 100.0))
+
+    def _pct(v):
+        return v * 100.0 / par if par else v
+
     return {
         'selected_npv': selected['npv'],
+        'pv_note': _pct(selected['npv']),
+        'ytm': model_ytm_to_maturity,
         'valuation_mode': valuation_mode,
         'selected_call_date': selected['call_date'],
         'discount_curve_name': discount_curve_name,
@@ -813,6 +820,12 @@ def _price_with_curve(curve, asset, curve_json=None, discount_curve_name=None):
         'model_ytc_to_first_call': model_ytc_to_first_call,
         'scenarios': scenarios,
         'hw_parameters': hw_params,
+        'price_pct': {
+            'pv_note':               _pct(selected['npv']),
+            'pv_note_to_maturity':   _pct(maturity_scenario['npv']),
+            'pv_note_to_worst_call': _pct(worst['npv']),
+            'pv_note_to_first_call': _pct(first['npv']),
+        },
     }
 
 

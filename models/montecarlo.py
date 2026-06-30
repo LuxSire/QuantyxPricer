@@ -33,6 +33,7 @@ try:
     from models.hullwhite import (
         BOND_FILE,
         CURVE_FILE,
+        amount_to_pct,
         build_discount_curve,
         get_bond_files,
         get_business_day_convention,
@@ -43,6 +44,7 @@ except ModuleNotFoundError:
     from hullwhite import (
         BOND_FILE,
         CURVE_FILE,
+        amount_to_pct,
         build_discount_curve,
         get_bond_files,
         get_business_day_convention,
@@ -356,8 +358,16 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
     clean_price = npv - accrued_amount
     dirty_price = npv
 
+    pv_note_pct = amount_to_pct(clean_price, bond_data)
+    pv_note_dirty_pct = amount_to_pct(dirty_price, bond_data)
+    valuation_mode = 'to_first_call' if call_probability is not None else 'to_maturity'
+
     return {
         'npv': npv,
+        'selected_npv': npv,
+        'pv_note': pv_note_pct,
+        'valuation_mode': valuation_mode,
+        'spread_bp': issuer_spread_bp,
         'clean_price': clean_price,
         'dirty_price': dirty_price,
         'accrued_amount': accrued_amount,
@@ -369,6 +379,12 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None):
         'mc_seed': seed,
         'evaluation_date': evaluation_date.ISO(),
         'call_probability': call_probability,
+        'price_pct': {
+            'pv_note':               pv_note_pct,
+            'pv_note_to_maturity':   pv_note_pct,
+            'pv_note_to_worst_call': pv_note_pct,
+            'pv_note_to_first_call': pv_note_pct,
+        },
     }
 
 

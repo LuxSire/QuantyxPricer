@@ -163,8 +163,9 @@ def price_note(note_data, curve, curve_day_count):
         )
 
     notional       = float(note_data.get('note_notional', 100_000_000.0))
-    spread_bp      = float(note_data.get('credit_spread_bp', 0.0)) + float(
-        note_data.get('collateral_spread_bp') or note_data.get('collateral_spread') or 0.0
+    _csb = note_data.get('collateral_spread_bp')
+    spread_bp = float(note_data.get('credit_spread_bp', 0.0)) + (
+        float(_csb) if _csb is not None else float(note_data.get('collateral_spread') or 0.0)
     )
     index_assump   = get_index_assumption(note_data)
     dates          = build_note_dates(note_data)
@@ -204,41 +205,68 @@ def price_note(note_data, curve, curve_day_count):
     }
 
 
+def _cds_flat_spread_bp(cds_curve_name, curve_json):
+    """Return the flat CDS spread in basis points from the named curve (average of pillar rates)."""
+    if not cds_curve_name:
+        return 0.0
+    curves = curve_json if isinstance(curve_json, list) else [curve_json]
+    for c in curves:
+        if c.get('curve_name') == cds_curve_name:
+            pillars = c.get('pillars', [])
+            if not pillars:
+                return 0.0
+            rates = [float(p.get('rate', 0.0)) for p in pillars]
+            return sum(rates) / len(rates)
+    return 0.0
+
+
 def price_sensitivity(note_data, curve_json, n_steps=2, step_pct=0.10):
-    base = get_index_assumption(note_data)['annual_inflation_rate']
-    if base == 0.0:
-        return []
-    multipliers = [1.0 + (i - n_steps) * step_pct for i in range(2 * n_steps + 1)]
-    orig_assumption = dict(
-        note_data.get('index_linked_assumption') or
-        note_data.get('collateral', {}).get('inflation_assumption', {}) or {}
+    """Return a vector of {spread_bp, pv_note_pct} varying credit_spread_bp around its base value.
+
+    The reported spread_bp is the total effective spread (CDS sovereign + issuer credit).
+    """
+    cds_spread_bp = _cds_flat_spread_bp(note_data.get('cds_curve'), curve_json)
+    _csb = note_data.get('collateral_spread_bp')
+    base_credit = float(note_data.get('credit_spread_bp', 0.0)) + (
+        float(_csb) if _csb is not None else float(note_data.get('collateral_spread') or 0.0)
     )
+    multipliers = [1.0 + (i - n_steps) * step_pct for i in range(2 * n_steps + 1)]
     sensitivity = []
     for m in multipliers:
-        level = round(base * m, 8)
-        overridden = {**orig_assumption, 'annual_index_growth_rate': level}
-        d = {**note_data, 'index_linked_assumption': overridden}
+        credit_level = round(base_credit * m, 6)
+        d = {**note_data, 'credit_spread_bp': credit_level, 'collateral_spread_bp': 0.0}
         r = price_asset(d, curve_json, _skip_sensitivity=True)
-        sensitivity.append({'spread_bp': round(level * 100, 6), 'pv_note_pct': r['price_pct']['pv_note']})
+        sensitivity.append({
+            'spread_bp':   round(credit_level + cds_spread_bp, 6),
+            'pv_note_pct': r['price_pct']['pv_note'],
+        })
     return sensitivity
 
 
 def price_asset(note_data, curve_json, _skip_sensitivity=False):
     evaluation_date = parse_date(note_data['evaluation_date'])
 
-    note_curve_cfg,       note_curve_name       = select_note_curve(note_data, curve_json)
-    collateral_curve_cfg, collateral_curve_name = select_collateral_curve(note_data, curve_json)
+    # Stack sovereign CDS spread on top of the issuer credit_spread_bp.
+    # note_data (original) is passed to price_sensitivity so it adds cds_spread once.
+    cds_spread_bp = _cds_flat_spread_bp(note_data.get('cds_curve'), curve_json)
+    nd = ({
+        **note_data,
+        'credit_spread_bp': float(note_data.get('credit_spread_bp', 0.0)) + cds_spread_bp,
+    } if cds_spread_bp else note_data)
+
+    note_curve_cfg,       note_curve_name       = select_note_curve(nd, curve_json)
+    collateral_curve_cfg, collateral_curve_name = select_collateral_curve(nd, curve_json)
     note_curve,       note_curve_day_count       = build_discount_curve_and_dc(note_curve_cfg,       evaluation_date)
     collateral_curve, collateral_curve_day_count = build_discount_curve_and_dc(collateral_curve_cfg, evaluation_date)
 
-    note_notional = float(note_data.get('note_notional', 100_000_000.0))
-    issue_price   = float(note_data.get('issue_price', 100.0))
+    note_notional = float(nd.get('note_notional', 100_000_000.0))
+    issue_price   = float(nd.get('issue_price', 100.0))
 
-    note_leg = price_note(note_data, note_curve, note_curve_day_count)
+    note_leg = price_note(nd, note_curve, note_curve_day_count)
 
-    if note_data.get('collateral'):
+    if nd.get('collateral'):
         collateral_leg = model_collateral_pv(
-            note_data['collateral'], collateral_curve, collateral_curve_day_count
+            nd['collateral'], collateral_curve, collateral_curve_day_count
         )
     else:
         collateral_leg = {
@@ -246,10 +274,10 @@ def price_asset(note_data, curve_json, _skip_sensitivity=False):
             'valuation_method': None, 'cashflows': [],
         }
 
-    adjustments          = compute_valuation_adjustments(note_data, note_curve, note_curve_day_count)
-    contract_completeness = assess_contract_completeness(note_data)
+    adjustments          = compute_valuation_adjustments(nd, note_curve, note_curve_day_count)
+    contract_completeness = assess_contract_completeness(nd)
 
-    swap_mode = note_data.get('swap', {}).get('mode', 'calibration_residual')
+    swap_mode = nd.get('swap', {}).get('mode', 'calibration_residual')
     if swap_mode == 'calibration_residual':
         pv_swap = note_leg['pv_note'] - collateral_leg['pv_collateral'] + adjustments['pv_total_adjustments']
     else:
@@ -264,6 +292,8 @@ def price_asset(note_data, curve_json, _skip_sensitivity=False):
         'evaluation_date':              evaluation_date.ISO(),
         'note_discount_curve_name':     note_curve_name,
         'collateral_discount_curve_name': collateral_curve_name,
+        'cds_curve_name':               note_data.get('cds_curve', ''),
+        'cds_spread_bp':                cds_spread_bp,
         'issue_price':                  issue_price,
         'note_notional':                note_notional,
         'pv_note':                      lhs * s,

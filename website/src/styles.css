@@ -20,3 +20,9 @@ tr:nth-child(even) { background: #fafafa; }
 .call-dates-table { width: 100%; border-collapse: collapse; margin: 6px 0 }
 .call-dates-table th, .call-dates-table td { border: 1px solid #e6e6e6; padding: 6px }
 .call-dates-table thead th { background: #f7f7fb; font-weight: 700 }
+
+@media print {
+  body * { visibility: hidden; }
+  #instrument-print-area, #instrument-print-area * { visibility: visible; }
+  #instrument-print-area { position: absolute; left: 0; top: 0; width: 100%; }
+}

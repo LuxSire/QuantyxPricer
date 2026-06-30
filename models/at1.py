@@ -340,7 +340,13 @@ def price_asset(bond_data, curve_json, issuer_spread_bp=None, _skip_sensitivity=
     par            = float(bond_data.get('par', 100.0))
     z_spread       = issuer_spread_bp / 10_000.0
     fixed_coupon   = normalize_rate(bond_data['fixed_coupon_rate'])
-    first_call_date = parse_date(bond_data['first_call_date'])
+    _first_call_raw = (
+        bond_data.get('first_call_date')
+        or (bond_data['call_dates'][0] if bond_data.get('call_dates') else None)
+    )
+    if not _first_call_raw:
+        raise ValueError('at1 model requires first_call_date or at least one entry in call_dates')
+    first_call_date = parse_date(_first_call_raw)
     calendar       = get_calendar(bond_data.get('calendar', 'TARGET'))
     bdc            = _BDC.get(bond_data.get('business_day_convention', 'ModifiedFollowing'), ql.ModifiedFollowing)
     day_count      = get_day_count(bond_data.get('accrual_day_count', 'ACT/ACT (ICMA)'))

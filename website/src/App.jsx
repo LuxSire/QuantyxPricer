@@ -3,6 +3,8 @@ import logo from '../logo_q.png'
 import Instrument from './Instrument'
 import TimeSeries from './TimeSeries'
 import Settings from './Settings'
+import Curves from './Curves'
+import BondData from './BondData'
 import Sidebar from './Sidebar'
 import Login from './Login'
 import Register from './Register'
@@ -48,6 +50,12 @@ function AuthenticatedApp({ apiBase, onLogout }) {
     return null
   })
   const [settingsOpen, setSettingsOpen] = useState(() => window.location.hash === '#/settings')
+  const [curvesOpen, setCurvesOpen] = useState(() => window.location.hash === '#/curves')
+  const [bondDataRoute, setBondDataRoute] = useState(() => {
+    const h = window.location.hash || ''
+    if (h.startsWith('#/bond_data/')) return h.replace('#/bond_data/', '')
+    return null
+  })
 
   const { rows, error, pricingAll, updatingCurves, onPriceAll, onUpdateCurves, refreshPrices, pricing_single_asset, downloadPrice, downloadAndInsertPrices, downloadAndInsertAllPrices, downloadingAll } = usePrices(apiBase)
   const { fetchNopricedAssets, fetchUnderlyingAssets, fetchAllAssets } = useAsset(apiBase)
@@ -96,10 +104,12 @@ function AuthenticatedApp({ apiBase, onLogout }) {
   useEffect(() => {
     function onHash() {
       const h = window.location.hash || ''
-      if (h.startsWith('#/instrument/')) { setRoute(h.replace('#/instrument/', '')); setTsRoute(null); setSettingsOpen(false) }
-      else if (h.startsWith('#/timeseries/')) { setTsRoute(h.replace('#/timeseries/', '')); setRoute(null); setSettingsOpen(false) }
-      else if (h === '#/settings') { setSettingsOpen(true); setRoute(null); setTsRoute(null) }
-      else { setRoute(null); setTsRoute(null); setSettingsOpen(false) }
+      if (h.startsWith('#/instrument/')) { setRoute(h.replace('#/instrument/', '')); setTsRoute(null); setSettingsOpen(false); setCurvesOpen(false); setBondDataRoute(null) }
+      else if (h.startsWith('#/timeseries/')) { setTsRoute(h.replace('#/timeseries/', '')); setRoute(null); setSettingsOpen(false); setCurvesOpen(false); setBondDataRoute(null) }
+      else if (h.startsWith('#/bond_data/')) { setBondDataRoute(h.replace('#/bond_data/', '')); setRoute(null); setTsRoute(null); setSettingsOpen(false); setCurvesOpen(false) }
+      else if (h === '#/settings') { setSettingsOpen(true); setRoute(null); setTsRoute(null); setCurvesOpen(false); setBondDataRoute(null) }
+      else if (h === '#/curves') { setCurvesOpen(true); setSettingsOpen(false); setRoute(null); setTsRoute(null); setBondDataRoute(null) }
+      else { setRoute(null); setTsRoute(null); setSettingsOpen(false); setCurvesOpen(false); setBondDataRoute(null) }
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
@@ -140,6 +150,8 @@ function AuthenticatedApp({ apiBase, onLogout }) {
   if (!rows) return <div>Loading data...</div>
 
   if (settingsOpen) return <Settings apiBase={apiBase} />
+  if (curvesOpen) return <Curves apiBase={apiBase} />
+  if (bondDataRoute) return <BondData instrumentId={bondDataRoute} apiBase={apiBase} />
   if (tsRoute) return <TimeSeries instrumentId={tsRoute} apiBase={apiBase} />
   if (route) return <Instrument instrumentId={route} apiBase={apiBase} />
 
@@ -182,6 +194,7 @@ function AuthenticatedApp({ apiBase, onLogout }) {
           pricingAll={pricingAll}
           onUpdateCurves={() => onUpdateCurves(setSnack)}
           updatingCurves={updatingCurves}
+          onCurves={() => { window.location.hash = '#/curves' }}
           onAssetSaved={refreshMissing}
         />
         <div className="main-panel">

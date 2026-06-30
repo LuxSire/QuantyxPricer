@@ -19,6 +19,7 @@ export default function Sidebar({
   pricingAll,
   onUpdateCurves,
   updatingCurves,
+  onCurves,
   apiBase,
   onAssetSaved,
 }) {
@@ -36,7 +37,6 @@ export default function Sidebar({
       setLookupError('Enter an instrument code')
       return
     }
-
     setLookupLoading(true)
     setLookupError('')
     setLookupResult(null)
@@ -53,11 +53,13 @@ export default function Sidebar({
       setLookupLoading(false)
     }
   }, [fetchAsset, lookupCode])
-  
+
   return (
     <aside className="sidebar">
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
+
+      {/* TOP: primary action */}
+      <div className="sidebar-top">
+        <div className="sidebar-btn-row">
           <button
             className="clear-btn"
             onClick={onPriceAll}
@@ -66,118 +68,81 @@ export default function Sidebar({
           >
             {pricingAll ? '⏳ Pricing...' : '⏱️ Price All'}
           </button>
+        </div>
+      </div>
+
+      {/* SCROLLABLE MIDDLE: filters + tools */}
+      <div className="sidebar-scroll">
+        <h3 className="sidebar-title">Filters</h3>
+
+        <div className="filter-group">
+          <label>Instrument ID</label>
+          <input
+            list="instrument-ids"
+            value={filterInstrument}
+            onChange={(e) => setFilterInstrument(e.target.value)}
+            placeholder="Type or pick..."
+          />
+        </div>
+
+        <div className="filter-group">
+          <label>Model</label>
+          <select value={filterModel} onChange={(e) => setFilterModel(e.target.value)}>
+            <option value="">(all)</option>
+            {models.map((m, i) => <option key={i} value={m}>{m}</option>)}
+          </select>
+        </div>
+
+        <div className="filter-group">
+          <label>Currency</label>
+          <select value={filterCurrency} onChange={(e) => setFilterCurrency(e.target.value)}>
+            <option value="">(all)</option>
+            {currencies.map((c, i) => <option key={i} value={c}>{c}</option>)}
+          </select>
+        </div>
+
+        <div className="filter-group">
+          <label>Issuer</label>
+          <select value={filterIssuer} onChange={(e) => setFilterIssuer(e.target.value)}>
+            <option value="">(all)</option>
+            {issuers.map((s, i) => <option key={i} value={s}>{s}</option>)}
+          </select>
+        </div>
+
+        <div className="sidebar-actions">
+          <div className="sidebar-btn-row">
+            <button className="clear-btn" onClick={() => setShowLookup(true)} title="Lookup asset">🔍 Lookup</button>
+            <button className="clear-btn" onClick={() => setShowUploader(true)}>Add</button>
+            <button className="clear-btn" onClick={clearAll}>Clear</button>
+          </div>
+        </div>
+      </div>
+
+      {/* CURVES SECTION */}
+      <div className="sidebar-curves">
+        <div className="sidebar-section-title">📈 Curves</div>
+        <div className="sidebar-btn-row">
+          <button className="clear-btn" onClick={onCurves} title="View swap curves">
+            View
+          </button>
           <button
             className="clear-btn clear-btn--update-curves"
             onClick={onUpdateCurves}
             disabled={updatingCurves}
-            title="Update swap curves (ECB)"
+            title="Update swap curves (ECB, Fed, CDS)"
           >
-            {updatingCurves ? '⏳ Updating...' : '💾 Update Curves'}
+            {updatingCurves ? '⏳ Updating...' : '💾 Update'}
           </button>
         </div>
       </div>
-      <h3 className="sidebar-title">Filters</h3>
 
-      <div className="filter-group">
-        <label>Instrument ID</label>
-        <input
-          list="instrument-ids"
-          value={filterInstrument}
-          onChange={(e) => setFilterInstrument(e.target.value)}
-          placeholder="Type or pick..."
-        />
-      </div>
-
-      <div className="filter-group">
-        <label>Model</label>
-        <select value={filterModel} onChange={(e) => setFilterModel(e.target.value)}>
-          <option value="">(all)</option>
-          {models.map((m, i) => <option key={i} value={m}>{m}</option>)}
-        </select>
-      </div>
-
-      <div className="filter-group">
-        <label>Currency</label>
-        <select value={filterCurrency} onChange={(e) => setFilterCurrency(e.target.value)}>
-          <option value="">(all)</option>
-          {currencies.map((c, i) => <option key={i} value={c}>{c}</option>)}
-        </select>
-      </div>
-
-      <div className="filter-group">
-        <label>Issuer</label>
-        <select value={filterIssuer} onChange={(e) => setFilterIssuer(e.target.value)}>
-          <option value="">(all)</option>
-          {issuers.map((s, i) => <option key={i} value={s}>{s}</option>)}
-        </select>
-      </div>
-
-      <div style={{ marginTop: 12 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="clear-btn" onClick={() => setShowLookup(true)} title="Lookup asset">🔍 Lookup</button>
-          <button className="clear-btn" onClick={() => setShowUploader(true)}>Add</button>
-          <button className="clear-btn" onClick={clearAll}>Clear filters</button>
-        </div>
-        {showLookup && (
-          <div className="lookup-backdrop" onClick={() => setShowLookup(false)}>
-            <div className="lookup-modal" onClick={(e) => e.stopPropagation()}>
-              <h3>Lookup Asset</h3>
-              <div className="filter-group">
-                <label>Instrument Code</label>
-                <input
-                  value={lookupCode}
-                  onChange={(e) => setLookupCode(e.target.value)}
-                  placeholder="Enter code"
-                />
-              </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                <button
-                  type="button"
-                  className="clear-btn"
-                  onClick={runLookup}
-                  disabled={lookupLoading}
-                >
-                  {lookupLoading ? 'Searching...' : 'Search'}
-                </button>
-                <button
-                  type="button"
-                  className="clear-btn clear-btn--cancel"
-                  onClick={() => {
-                    setShowLookup(false)
-                    setLookupError('')
-                    setLookupCode('')
-                    setLookupResult(null)
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
-              {lookupError && <div className="error" style={{ marginTop: 10 }}>{lookupError}</div>}
-              {lookupResult !== null && (
-                <div className="lookup-result" style={{ marginTop: 16 }}>
-                  <h4>Result</h4>
-                  <pre>{JSON.stringify(lookupResult, null, 2)}</pre>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-        {showUploader && (
-          <FileUploaderDialog
-            apiBase={apiBase}
-            onClose={() => setShowUploader(false)}
-            onAssetSaved={onAssetSaved}
-          />
-        )}
-      </div>
-
-      <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+      {/* BOTTOM: links */}
+      <div className="sidebar-bottom">
         <a
           className="clear-btn clear-btn--api"
           href={`${(apiBase || '').replace(/\/$/, '')}/docs`}
           target="_blank"
           rel="noreferrer"
-          style={{ display: 'inline-block', textDecoration: 'none' }}
           title="Open API documentation"
         >
           API
@@ -185,12 +150,65 @@ export default function Sidebar({
         <a
           className="clear-btn"
           href="#/settings"
-          style={{ display: 'inline-block', textDecoration: 'none' }}
           title="Model settings"
         >
           Settings
         </a>
       </div>
+
+      {/* MODALS */}
+      {showLookup && (
+        <div className="lookup-backdrop" onClick={() => setShowLookup(false)}>
+          <div className="lookup-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Lookup Asset</h3>
+            <div className="filter-group">
+              <label>Instrument Code</label>
+              <input
+                value={lookupCode}
+                onChange={(e) => setLookupCode(e.target.value)}
+                placeholder="Enter code"
+              />
+            </div>
+            <div className="lookup-modal-actions">
+              <button
+                type="button"
+                className="clear-btn"
+                onClick={runLookup}
+                disabled={lookupLoading}
+              >
+                {lookupLoading ? 'Searching...' : 'Search'}
+              </button>
+              <button
+                type="button"
+                className="clear-btn clear-btn--cancel"
+                onClick={() => {
+                  setShowLookup(false)
+                  setLookupError('')
+                  setLookupCode('')
+                  setLookupResult(null)
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+            {lookupError && <div className="error">{lookupError}</div>}
+            {lookupResult !== null && (
+              <div className="lookup-result">
+                <h4>Result</h4>
+                <pre>{JSON.stringify(lookupResult, null, 2)}</pre>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showUploader && (
+        <FileUploaderDialog
+          apiBase={apiBase}
+          onClose={() => setShowUploader(false)}
+          onAssetSaved={onAssetSaved}
+        />
+      )}
     </aside>
   )
 }

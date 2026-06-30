@@ -11,10 +11,21 @@ file.
 
 import json
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
 import requests
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT / 'api') not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT / 'api'))
+try:
+    import db as _db
+    _DB_AVAILABLE = True
+except Exception:
+    _db = None
+    _DB_AVAILABLE = False
 
 
 def _read_fred_api_key(project_root: Path):
@@ -163,24 +174,34 @@ def update_swap_curves_fed(swap_curves_path=None, verbose=True):
             print(f"[FED] Updating {curve.get('curve_name')} with {series_id} ({date_str})...")
 
         curve["as_of"] = date_str
+        _curve_written = False
 
         if "pillars" in curve and curve["pillars"]:
             curve["pillars"][0]["rate"] = value
             curve["pillars"][0]["source"] = f"FRED {series_id} ({date_str})"
             updated_count += 1
+            _curve_written = True
         elif "spot" in curve:
             curve["spot"]["rate"] = value
             curve["spot"]["source"] = f"FRED {series_id} ({date_str})"
             updated_count += 1
+            _curve_written = True
         else:
             # fallback: set a top-level 'rate' if present
             if "rate" in curve:
                 curve["rate"] = value
                 curve["source"] = f"FRED {series_id} ({date_str})"
                 updated_count += 1
+                _curve_written = True
             else:
                 if verbose:
                     print(f"[FED]   Skipped {curve.get('curve_name')} (unknown structure)")
+
+        if _curve_written and _DB_AVAILABLE:
+            try:
+                _db.upsert_curve(curve["curve_name"], curve)
+            except Exception as dbe:
+                print(f"[FED]   Warning: DB write failed for {curve.get('curve_name')}: {dbe}")
 
     with open(swap_curves_path, "w") as f:
         json.dump(curves, f, indent=2)

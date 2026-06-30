@@ -185,6 +185,29 @@ def select_prices() -> list[Dict[str, Any]]:
     finally:
         conn.close()
 
+def select_prices_cbonds() -> list[Dict[str, Any]]:
+    """Return all rows from the prices table where provider = cbonds."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT code, json, datetime FROM prices WHERE provider=%s', ('cbonds',))
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+
+        result = []
+        for row in rows:
+            obj = _decode_json_row(row)
+            dt = row.get('datetime')
+            if dt is not None:
+                obj['_datetime'] = dt.isoformat() if hasattr(dt, 'isoformat') else str(dt)
+            result.append(obj)
+        return result
+    finally:
+        conn.close()
+
+
 def select_timeseries() -> list[Dict[str, Any]]:
     """Return all rows from the prices table as a list of parsed JSON dicts."""
     conn = get_connection()
@@ -219,6 +242,57 @@ def select_price(code: str) -> Optional[Dict[str, Any]]:
         conn.close()
 
 
+def select_curves() -> list[Dict[str, Any]]:
+    """Return all rows from the curves table as a list of parsed JSON dicts."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT my_row_id, name, json FROM curves ORDER BY name')
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+        return [_decode_json_row(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def upsert_curve(name: str, payload: Dict[str, Any]) -> None:
+    """Insert or replace a curve row (delete + insert for idempotency)."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        try:
+            json_bytes = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+            cursor.execute('DELETE FROM curves WHERE name = %s', (name,))
+            cursor.execute('INSERT INTO curves (name, json) VALUES (%s, %s)', (name, json_bytes))
+            conn.commit()
+        finally:
+            cursor.close()
+    finally:
+        conn.close()
+
+
+def insert_curve(name: str, payload: Dict[str, Any]) -> int:
+    """Insert a new curve row. Returns the new my_row_id. Raises ValueError if name already exists."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT my_row_id FROM curves WHERE name = %s LIMIT 1', (name,))
+            if cursor.fetchone() is not None:
+                raise ValueError(f"Curve '{name}' already exists; use update_curve to overwrite.")
+            json_bytes = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+            cursor.execute('INSERT INTO curves (name, json) VALUES (%s, %s)', (name, json_bytes))
+            conn.commit()
+            row_id = cursor.lastrowid
+        finally:
+            cursor.close()
+        return int(row_id)
+    finally:
+        conn.close()
+
+
 def select_models() -> list[dict]:
     """Return all models with name, required_fields, and optional_fields from the models table."""
     conn = get_connection()
@@ -245,16 +319,23 @@ def select_models() -> list[dict]:
 
 
 def update_model(name: str, required_fields: list, optional_fields: list) -> None:
-    """Update required_fields and optional_fields for a model via stored procedure."""
+    """Upsert required_fields and optional_fields for a model."""
     conn = get_connection()
     try:
         cursor = conn.cursor()
         try:
-            cursor.callproc('update_model', [
-                name,
-                json.dumps(required_fields, ensure_ascii=False),
-                json.dumps(optional_fields, ensure_ascii=False),
-            ])
+            cursor.execute(
+                '''INSERT INTO models (name, required_fields, optional_fields)
+                   VALUES (%s, %s, %s)
+                   ON DUPLICATE KEY UPDATE
+                     required_fields = VALUES(required_fields),
+                     optional_fields = VALUES(optional_fields)''',
+                (
+                    name,
+                    json.dumps(required_fields, ensure_ascii=False),
+                    json.dumps(optional_fields, ensure_ascii=False),
+                ),
+            )
             conn.commit()
         finally:
             cursor.close()
@@ -268,7 +349,7 @@ def select_users() -> list[Dict[str, Any]]:
     try:
         cursor = conn.cursor(dictionary=True)
         try:
-            cursor.execute('SELECT email, firstname, lastname, password FROM `user`')
+            cursor.execute('SELECT email, firstname, lastname, password, company FROM `users`')
             rows = cursor.fetchall()
         finally:
             cursor.close()
@@ -279,13 +360,16 @@ def select_users() -> list[Dict[str, Any]]:
 
 def insert_user(email: str, firstname: str, lastname: str, password_hash: str) -> int:
     """Insert a new user row. Returns the new my_row_id."""
+    domain = email.split('@')[-1] if '@' in email else ''
+    company = domain.split('.')[0] if domain else ''
+
     conn = get_connection()
     try:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                'INSERT INTO `user` (email, firstname, lastname, password) VALUES (%s, %s, %s, %s)',
-                (email, firstname, lastname, password_hash),
+                'INSERT INTO `users` (email, firstname, lastname, password, company) VALUES (%s, %s, %s, %s, %s)',
+                (email, firstname, lastname, password_hash, company),
             )
             conn.commit()
             row_id = cursor.lastrowid

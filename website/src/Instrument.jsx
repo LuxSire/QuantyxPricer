@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { formatNumberForDisplay, isPercentageKey } from './helper'
 import { useAsset } from './hooks/useAsset'
+import { usePrices } from './hooks/usePrices'
 import DataChart from './components/DataChart'
 
 export default function Instrument({ instrumentId, apiBase = '' }) {
@@ -18,10 +19,22 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
   const [editMode, setEditMode] = useState(false)
   const [draftValues, setDraftValues] = useState({})
   const [saving, setSaving] = useState(false)
+  const [pricingSingle, setPricingSingle] = useState(false)
+  const { pricing_single_asset } = usePrices(apiBase)
+  const [deletedFields, setDeletedFields] = useState(new Set())
+  const [deleteConfirm, setDeleteConfirm] = useState(null)
+
+  const MANDATORY_KEYS = new Set(['instrument_id', 'model', 'currency', 'ir_curve', 'cds_curve'])
+  const COUPON_KEYS_LIST = ['coupon_structure', 'fixed_coupon_rate', 'accrual_day_count', 'coupon_frequency', 'calendar', 'business_day_convention']
+  const DATES_KEYS_LIST  = ['evaluation_date', 'issue_date', 'maturity_date', 'call_dates', 'date_generation']
+  const CARD_KEYS = new Set(['instrument_id', 'model', 'currency', 'ir_curve', 'cds_curve', ...COUPON_KEYS_LIST, ...DATES_KEYS_LIST])
+
   const mandatoryFields = {
     instrument_id: data?.instrument_id || isin || '',
     model: data?.model || '',
     currency: data?.currency || '',
+    ir_curve: data?.ir_curve || '',
+    cds_curve: data?.cds_curve || '',
   }
   const [newKey, setNewKey] = useState('')
   const [newValue, setNewValue] = useState('')
@@ -32,6 +45,9 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
   const [modelOptions, setModelOptions] = useState([])
   const [modelFieldData, setModelFieldData] = useState([])
   const [fields, setFields] = useState([])
+  const [curves, setCurves] = useState([])
+  const irCurveOptions = curves.filter(c => c.curve_type && c.curve_type.toLowerCase().includes('ois')).map(c => c.curve_name)
+  const cdsCurveOptions = curves.filter(c => c.curve_type === 'cds').map(c => c.curve_name)
   useEffect(() => {
     let mounted = true
     async function fetchJson() {
@@ -64,6 +80,16 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
     fetchJson()
     return () => { mounted = false }
   }, [instrumentId, apiBase, bondFile, isin, fetchAssetFields])
+
+  useEffect(() => {
+    let mounted = true
+    const base = String(apiBase || '').replace(/\/$/, '')
+    fetch(`${base}/fetch_curves`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { if (mounted) setCurves(data || []) })
+      .catch(() => {})
+    return () => { mounted = false }
+  }, [apiBase])
 
   useEffect(() => {
     let mounted = true
@@ -231,6 +257,24 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
 
   const renderEditor = (k, fallbackValue) => {
     const value = Object.prototype.hasOwnProperty.call(draftValues, k) ? draftValues[k] : fallbackValue
+    if (k === 'ir_curve') {
+      const selected = value == null ? '' : String(value)
+      return (
+        <select value={selected} onChange={(e) => onDraftChange(k, e.target.value)}>
+          <option value="">(select IR curve)</option>
+          {irCurveOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+        </select>
+      )
+    }
+    if (k === 'cds_curve') {
+      const selected = value == null ? '' : String(value)
+      return (
+        <select value={selected} onChange={(e) => onDraftChange(k, e.target.value)}>
+          <option value="">(select CDS curve)</option>
+          {cdsCurveOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+        </select>
+      )
+    }
     if (k === 'model') {
       const selected = value == null ? '' : String(value)
       const opts = modelOptions.includes(selected) ? modelOptions : [...modelOptions, selected].filter(Boolean)
@@ -341,18 +385,18 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
 
   const startEdit = () => {
     const initial = {}
-    for (const [k, v] of allDisplayedEntries) initial[k] = v
-    // Ensure mandatory fields are included in draft
-    initial.instrument_id = mandatoryFields.instrument_id
-    initial.model = mandatoryFields.model
-    initial.currency = mandatoryFields.currency
+    const source = fields.length > 0 ? fields.map(f => [f.name, f.value]) : Object.entries(data)
+    for (const [k, v] of source) initial[k] = v
+    for (const [k, v] of Object.entries(mandatoryFields)) initial[k] = v
     setDraftValues(initial)
+    setDeletedFields(new Set())
     setEditMode(true)
   }
 
   const cancelEdit = () => {
     setEditMode(false)
     setDraftValues({})
+    setDeletedFields(new Set())
     setNewKey('')
     setNewValue('')
   }
@@ -374,11 +418,17 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
         updated[trimmedKey] = coerceEditedValue(trimmedKey, trimmedValue, undefined)
       }
 
+      // Remove fields the user marked for deletion
+      for (const k of deletedFields) {
+        delete updated[k]
+      }
+
       await updateAsset(updated, bondFile, isin)
 
       setData(updated)
       setEditMode(false)
       setDraftValues({})
+      setDeletedFields(new Set())
       setNewKey('')
       setNewValue('')
       setSnack({ visible: true, message: 'Asset updated successfully', type: 'success' })
@@ -473,6 +523,21 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
       <div style={{ marginTop: 10, marginBottom: 8, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button className="clear-btn clear-btn--termsheet" onClick={openTermsheet}>Termsheet</button>
         <button className="clear-btn clear-btn--report" onClick={openReport}>Report</button>
+        <button
+          className="clear-btn clear-btn--api"
+          onClick={() => { window.location.hash = `#/bond_data/${isin}` }}
+        >Web</button>
+        <button
+          className="clear-btn"
+          disabled={pricingSingle || editMode}
+          onClick={async () => {
+            setPricingSingle(true)
+            await pricing_single_asset(isin, setSnack)
+            setPricingSingle(false)
+          }}
+        >
+          {pricingSingle ? 'Pricing...' : 'Price'}
+        </button>
         {!editMode ? (
           <button className="clear-btn" onClick={startEdit}>Edit</button>
         ) : (
@@ -483,72 +548,183 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
         )}
       </div>
       <h2>{(data.description ? (data.description.length > 100 ? data.description.slice(0, 99) + '…' : data.description) : instrumentId)}</h2>
-      <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 16, gap: 16 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+
+        {/* 4 cards in a row */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+
+          {/* Bond Setup */}
+          <div style={{ background: '#0d1a27', border: '1px solid #1a2d44', borderRadius: 6, overflow: 'hidden' }}>
+            <div style={{ padding: '6px 10px', background: '#0b1520', borderBottom: '1px solid #1a2d44' }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: '#d4af37', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Bond Setup</span>
+            </div>
+            <table style={{ borderCollapse: 'collapse' }}>
+              <tbody>
+                {[['instrument_id', mandatoryFields.instrument_id], ['model', mandatoryFields.model], ['currency', mandatoryFields.currency], ['ir_curve', mandatoryFields.ir_curve], ['cds_curve', mandatoryFields.cds_curve]].map(([label, val]) => (
+                  <tr key={label} style={{ borderBottom: '1px solid #1a2535' }}>
+                    <td style={{ padding: '5px 10px', fontSize: 11, color: '#6b7f99', fontWeight: 600, whiteSpace: 'nowrap', background: '#0c1520' }}>{label}</td>
+                    <td style={{ padding: '5px 10px', fontSize: 11, color: '#e6eef6', whiteSpace: 'nowrap' }}>
+                      {editMode ? renderEditor(label, val) : (val || '-')}
+                    </td>
+                  </tr>
+                ))}
+                {editMode && (
+                  <tr style={{ borderBottom: '1px solid #1a2535' }}>
+                    <td style={{ padding: '5px 10px', background: '#0c1520' }}>
+                      <input type="text" placeholder="new key" value={newKey} onChange={(e) => setNewKey(e.target.value)}
+                        style={{ width: '100%', padding: '3px 6px', fontSize: 11, boxSizing: 'border-box', border: '1px solid #334155', borderRadius: 3, background: '#0a1320', color: '#e6eef6' }} />
+                    </td>
+                    <td style={{ padding: '5px 10px' }}>
+                      <input type="text" placeholder="new value" value={newValue} onChange={(e) => setNewValue(e.target.value)}
+                        style={{ width: '100%', padding: '3px 6px', fontSize: 11, boxSizing: 'border-box', border: '1px solid #334155', borderRadius: 3, background: '#0a1320', color: '#e6eef6' }} />
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Coupon */}
+          <div style={{ background: '#0d1a27', border: '1px solid #1a2d44', borderRadius: 6, overflow: 'hidden' }}>
+            <div style={{ padding: '6px 10px', background: '#0b1520', borderBottom: '1px solid #1a2d44' }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: '#34d399', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Coupon</span>
+            </div>
+            <table style={{ borderCollapse: 'collapse' }}>
+              <tbody>
+                {COUPON_KEYS_LIST.map(label => {
+                  const val = data?.[label]
+                  if (!editMode && (val == null || val === '')) return null
+                  return (
+                    <tr key={label} style={{ borderBottom: '1px solid #1a2535' }}>
+                      <td style={{ padding: '5px 10px', fontSize: 11, color: '#6b7f99', fontWeight: 600, whiteSpace: 'nowrap', background: '#0c1520' }}>{label}</td>
+                      <td style={{ padding: '5px 10px', fontSize: 11, color: '#e6eef6', whiteSpace: 'nowrap' }}>
+                        {editMode ? renderEditor(label, val) : String(val)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Dates */}
+          <div style={{ background: '#0d1a27', border: '1px solid #1a2d44', borderRadius: 6, overflow: 'hidden' }}>
+            <div style={{ padding: '6px 10px', background: '#0b1520', borderBottom: '1px solid #1a2d44' }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: '#f472b6', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Dates</span>
+            </div>
+            <table style={{ borderCollapse: 'collapse' }}>
+              <tbody>
+                {DATES_KEYS_LIST.map(label => {
+                  const val = data?.[label]
+                  if (!editMode && (val == null || val === '' || (Array.isArray(val) && val.length === 0))) return null
+                  return (
+                    <tr key={label} style={{ borderBottom: '1px solid #1a2535' }}>
+                      <td style={{ padding: '5px 10px', fontSize: 11, color: '#6b7f99', fontWeight: 600, whiteSpace: 'nowrap', background: '#0c1520' }}>{label}</td>
+                      <td style={{ padding: '5px 10px', fontSize: 11, color: '#e6eef6', whiteSpace: 'nowrap' }}>
+                        {editMode ? renderEditor(label, val) : (Array.isArray(val) ? val.join(', ') : String(val))}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Price Result */}
+          {priceResult && (() => {
+            const pp = priceResult.price_pct || {}
+            const entries = [
+              ['selected_npv',           priceResult.selected_npv],
+              ['valuation_mode',         priceResult.valuation_mode],
+              ['spread_bp',              priceResult.spread_bp],
+              ['pv_to_worst_call',       pp.pv_note_to_worst_call ?? pp.pv_note_to_worst],
+              ['pv_to_first_call',       pp.pv_note_to_first_call],
+              ['pv_to_maturity',         pp.pv_note_to_maturity],
+              ['model_ytm_to_maturity',  priceResult.model_ytm_to_maturity],
+              ['model_ytc_to_first_call',priceResult.model_ytc_to_first_call],
+            ].filter(([, v]) => v != null)
+            return (
+              <div style={{ background: '#0d1a27', border: '1px solid #1a2d44', borderRadius: 6, overflow: 'hidden' }}>
+                <div style={{ padding: '6px 10px', background: '#0b1520', borderBottom: '1px solid #1a2d44' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#60a5fa', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Price Result</span>
+                </div>
+                <table style={{ borderCollapse: 'collapse' }}>
+                  <tbody>
+                    {entries.map(([k, v]) => {
+                      const isPct = k === 'model_ytm_to_maturity' || k === 'model_ytc_to_first_call'
+                      const display = typeof v === 'number'
+                        ? isPct ? formatNumberForDisplay(v, { scale: 100, suffix: '%' }) : formatNumberForDisplay(v)
+                        : String(v)
+                      return (
+                        <tr key={k} style={{ borderBottom: '1px solid #1a2535' }}>
+                          <td style={{ padding: '5px 10px', fontSize: 11, color: '#6b7f99', fontWeight: 600, whiteSpace: 'nowrap', background: '#0c1520' }}>{k}</td>
+                          <td style={{ padding: '5px 10px', fontSize: 11, color: '#e6eef6', fontFamily: 'monospace', textAlign: 'right', whiteSpace: 'nowrap' }}>{display}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          })()}
+
+        </div>
+
         <div style={{ width: 380, height: 300 }}>
           <DataChart data={sensitivityData} />
         </div>
-        <table className="instrument-table" style={{ border: 'none', alignSelf: 'flex-start' }}>
+      </div>
+      {editMode && <div style={{ background: '#0d1a27', border: '1px solid #1a2d44', borderRadius: 6, overflow: 'hidden', marginTop: 4 }}>
+        <div style={{ padding: '6px 10px', background: '#0b1520', borderBottom: '1px solid #1a2d44' }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: '#9aa6b2', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Fields</span>
+        </div>
+        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
           <tbody>
-            <tr>
-              <td className="detail-key" style={{ border: 'none', padding: '6px 8px', fontWeight: 600 }}>instrument_id</td>
-              <td className="detail-value" style={{ border: 'none', padding: '6px 8px' }}>
-                {editMode ? renderEditor('instrument_id', mandatoryFields.instrument_id) : (mandatoryFields.instrument_id || '-')}
-              </td>
-            </tr>
-            <tr>
-              <td className="detail-key" style={{ border: 'none', padding: '6px 8px', fontWeight: 600 }}>model</td>
-              <td className="detail-value" style={{ border: 'none', padding: '6px 8px' }}>
-                {editMode ? renderEditor('model', mandatoryFields.model) : (mandatoryFields.model || '-')}
-              </td>
-            </tr>
-            <tr>
-              <td className="detail-key" style={{ border: 'none', padding: '6px 8px', fontWeight: 600 }}>currency</td>
-              <td className="detail-value" style={{ border: 'none', padding: '6px 8px' }}>
-                {editMode ? renderEditor('currency', mandatoryFields.currency) : (mandatoryFields.currency || '-')}
-              </td>
-            </tr>
-            {editMode && (
-              <tr>
-                <td className="detail-key" style={{ border: 'none', padding: '6px 8px', fontWeight: 600 }}>
-                  <input
-                    type="text"
-                    placeholder="new key"
-                    value={newKey}
-                    onChange={(e) => setNewKey(e.target.value)}
-                    style={{ width: '100%', padding: '4px 6px', fontSize: 13, boxSizing: 'border-box', border: '1px solid #444', borderRadius: 4, background: '#2a2a2a', color: '#fff' }}
-                  />
-                </td>
-                <td className="detail-value" style={{ border: 'none', padding: '6px 8px' }}>
-                  <input
-                    type="text"
-                    placeholder="new value"
-                    value={newValue}
-                    onChange={(e) => setNewValue(e.target.value)}
-                    style={{ width: '100%', padding: '4px 6px', fontSize: 13, boxSizing: 'border-box', border: '1px solid #444', borderRadius: 4, background: '#2a2a2a', color: '#fff' }}
-                  />
-                </td>
-              </tr>
-            )}
+            {rows.map((row, ri) => {
+              const mkKeyProps = (col, extra = {}) => {
+                const k = col[0]
+                const isDeletable = editMode && k && !MANDATORY_KEYS.has(k)
+                const isDeleted = editMode && k && deletedFields.has(k)
+                return {
+                  className: isDeleted ? 'field-deleted' : undefined,
+                  style: {
+                    padding: '5px 10px', fontSize: 11, color: col[2] === true ? '#facc15' : '#6b7f99',
+                    fontWeight: 600, whiteSpace: 'nowrap', background: '#0c1520',
+                    opacity: isDeleted ? 0.4 : 1,
+                    textDecoration: isDeleted ? 'line-through' : 'none',
+                    cursor: isDeletable ? 'context-menu' : 'default',
+                    ...extra,
+                  },
+                  onContextMenu: isDeletable ? (e) => { e.preventDefault(); setDeleteConfirm(k) } : undefined,
+                  title: isDeletable ? 'Right-click to delete field' : undefined,
+                }
+              }
+              return (
+                <tr key={ri} style={{ borderBottom: '1px solid #1a2535' }}>
+                  <td {...mkKeyProps(row[0])}>{row[0][0] || ''}</td>
+                  <td style={{ padding: '5px 10px', fontSize: 11, color: '#e6eef6' }}>{!deletedFields.has(row[0][0]) && (editMode ? renderEditCell(row[0][0], row[0][1]) : (row[0][1] == null ? '-' : renderValue(row[0][0], row[0][1])))}</td>
+
+                  <td {...mkKeyProps(row[1], { borderLeft: '1px solid #1a2d44' })}>{row[1][0] || ''}</td>
+                  <td style={{ padding: '5px 10px', fontSize: 11, color: '#e6eef6' }}>{!deletedFields.has(row[1][0]) && (editMode ? renderEditCell(row[1][0], row[1][1]) : (row[1][1] == null ? '-' : renderValue(row[1][0], row[1][1])))}</td>
+
+                  <td {...mkKeyProps(row[2], { borderLeft: '1px solid #1a2d44' })}>{row[2][0] || ''}</td>
+                  <td style={{ padding: '5px 10px', fontSize: 11, color: '#e6eef6' }}>{!deletedFields.has(row[2][0]) && (editMode ? renderEditCell(row[2][0], row[2][1]) : (row[2][1] == null ? '-' : renderValue(row[2][0], row[2][1])))}</td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
-
-      </div>
-      <table className="instrument-table" style={{width: '100%', border: 'none'}}>
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri}>
-              <td className="detail-key" style={{border: 'none', padding: '6px 8px', color: row[0][2] === true ? '#facc15' : undefined}}>{row[0][0] || ''}</td>
-              <td className="detail-value" style={{border: 'none', padding: '6px 8px'}}>{editMode ? renderEditCell(row[0][0], row[0][1]) : (row[0][1] == null ? '-' : renderValue(row[0][0], row[0][1]))}</td>
-
-              <td className="detail-key" style={{border: 'none', padding: '6px 8px', paddingLeft: '24px', borderLeft: '4px solid rgba(158,167,173,0.5)', color: row[1][2] === true ? '#facc15' : undefined}}>{row[1][0] || ''}</td>
-              <td className="detail-value" style={{border: 'none', padding: '6px 8px'}}>{editMode ? renderEditCell(row[1][0], row[1][1]) : (row[1][1] == null ? '-' : renderValue(row[1][0], row[1][1]))}</td>
-
-              <td className="detail-key" style={{border: 'none', padding: '6px 8px', paddingLeft: '24px', borderLeft: '4px solid rgba(158,167,173,0.5)', color: row[2][2] === true ? '#facc15' : undefined}}>{row[2][0] || ''}</td>
-              <td className="detail-value" style={{border: 'none', padding: '6px 8px'}}>{editMode ? renderEditCell(row[2][0], row[2][1]) : (row[2][1] == null ? '-' : renderValue(row[2][0], row[2][1]))}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      </div>}
+      {deleteConfirm && (
+        <DeleteFieldDialog
+          fieldKey={deleteConfirm}
+          onConfirm={() => {
+            setDeletedFields(prev => new Set([...prev, deleteConfirm]))
+            setDeleteConfirm(null)
+          }}
+          onClose={() => setDeleteConfirm(null)}
+        />
+      )}
       {dialog && (
         <FieldDialog
           fieldKey={dialog.key}
@@ -558,6 +734,8 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
           toDateInputValue={toDateInputValue}
           modelOptions={modelOptions}
           modelFieldData={modelFieldData}
+          irCurveOptions={irCurveOptions}
+          cdsCurveOptions={cdsCurveOptions}
           onConfirm={confirmFieldDialog}
           onClose={() => setDialog(null)}
         />
@@ -569,7 +747,7 @@ export default function Instrument({ instrumentId, apiBase = '' }) {
   )
 }
 
-function FieldDialog({ fieldKey, fieldValue, isDateKey, isDayCountKey, toDateInputValue, modelOptions = [], modelFieldData = [], onConfirm, onClose }) {
+function FieldDialog({ fieldKey, fieldValue, isDateKey, isDayCountKey, toDateInputValue, modelOptions = [], modelFieldData = [], irCurveOptions = [], cdsCurveOptions = [], onConfirm, onClose }) {
   const DAY_COUNT_OPTIONS = ['Actual360', 'Actual365Fixed', 'Thirty360', '30/360', 'ActualActual', 'ACT/ACT (PERIODIC BASIS)', 'ACT/ACT (ICMA)']
 
   const toEditString = (v) => {
@@ -616,6 +794,32 @@ function FieldDialog({ fieldKey, fieldValue, isDateKey, isDayCountKey, toDateInp
             </div>
           )}
         </>
+      )
+    }
+    if (fieldKey === 'ir_curve') {
+      return (
+        <select
+          autoFocus
+          value={localValue}
+          onChange={(e) => setLocalValue(e.target.value)}
+          style={{ width: '100%', padding: '6px 8px', fontSize: 14, background: '#1e293b', color: '#f1f5f9', border: '1px solid #444', borderRadius: 4 }}
+        >
+          <option value="">(select IR curve)</option>
+          {irCurveOptions.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      )
+    }
+    if (fieldKey === 'cds_curve') {
+      return (
+        <select
+          autoFocus
+          value={localValue}
+          onChange={(e) => setLocalValue(e.target.value)}
+          style={{ width: '100%', padding: '6px 8px', fontSize: 14, background: '#1e293b', color: '#f1f5f9', border: '1px solid #444', borderRadius: 4 }}
+        >
+          <option value="">(select CDS curve)</option>
+          {cdsCurveOptions.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
       )
     }
     if (isDayCountKey(fieldKey)) {
@@ -692,6 +896,24 @@ function FieldDialog({ fieldKey, fieldValue, isDateKey, isDayCountKey, toDateInp
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
           <button className="clear-btn" onClick={onClose}>Cancel</button>
           <button className="clear-btn" onClick={handleConfirm}>Save</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DeleteFieldDialog({ fieldKey, onConfirm, onClose }) {
+  return (
+    <div className="delete-field-backdrop" onClick={onClose}>
+      <div className="delete-field-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="delete-field-title">Delete field</div>
+        <p className="delete-field-body">
+          Are you sure you want to delete <code className="delete-field-key">{fieldKey}</code>?
+          The field will be removed from the asset when you save.
+        </p>
+        <div className="delete-field-actions">
+          <button className="clear-btn" onClick={onClose}>Cancel</button>
+          <button className="clear-btn clear-btn--termsheet" onClick={onConfirm}>Delete</button>
         </div>
       </div>
     </div>

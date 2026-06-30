@@ -24,8 +24,10 @@ import subprocess, sys
 import threading
 import uuid
 import tempfile
+import asyncio
+import importlib.util
 from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
-from classes import  Prices, Price, Asset, Assets,TS_Dict
+from classes import  Prices, Price, Asset, Assets, TS_Dict, Curves, Curve
 import bcrypt
 from models import helper
 import db
@@ -110,16 +112,33 @@ def _upload_blob(local_path: Path, blob_name: str) -> str | None:
 JOBS = {}
 JOBS_LOCK = threading.Lock()
 
-# Cached assets and prices loaded at startup
+# Cached assets, prices, and curves loaded at startup
 assets = Assets()
 prices = Prices()
 underlying_assets = Assets()
+curves = Curves()
 users: dict = {}  # keyed by email -> {email, firstname, lastname, password}
+
+CURVES_PATH = PROJECT_ROOT / 'curves' / 'swap_curves.json'
+
+def _load_curves() -> Curves:
+    try:
+        rows = db.select_curves()
+        curves_dict = {}
+        for item in rows:
+            c = Curve.from_dict(item)
+            if c.curve_name:
+                curves_dict[c.curve_name] = c
+        print(f'[API] _load_curves: loaded {len(curves_dict)} curves from DB')
+        return Curves(curves_dict)
+    except Exception as e:
+        print(f'[API] Warning: could not load curves from DB: {e}')
+        return Curves()
 
 
 @app.on_event('startup')
 async def initialize_data():
-    global assets, prices,underlying_assets
+    global assets, prices, underlying_assets, curves
     try:
         loaded_assets = await fetch_assets()
         print(f"[API] Sample asset from DB: {loaded_assets[0] if loaded_assets else 'empty'}")  # ← add this
@@ -180,6 +199,10 @@ async def initialize_data():
     except Exception as e:
         print(f"[API] Warning: could not extract underlying assets: {e}")
         underlying_assets = Assets()
+
+    # Load curves
+    curves = _load_curves()
+    print(f'[API] Loaded {len(curves)} curves from {CURVES_PATH}')
 
     # Load users
     global users
@@ -726,8 +749,15 @@ async def download_prices(instrument_id: str):
                 # Also try cbonds
                 res = provider.fetch_from_cbonds(safe_id)
         
-        if res is None :
+        if res is None:
             raise HTTPException(status_code=404, detail=f'No market data found for {safe_id}')
+        # Stamp instrument_id so downstream insert_prices always has it
+        if isinstance(res, dict) and not res.get('instrument_id'):
+            res['instrument_id'] = safe_id
+        elif isinstance(res, list):
+            for item in res:
+                if isinstance(item, dict) and not item.get('instrument_id'):
+                    item['instrument_id'] = safe_id
         print(f"[API] Downloaded market data for {safe_id}: prices={res is not None}")
         return res
     except HTTPException:
@@ -771,6 +801,115 @@ async def fetch_prices():
     except Exception as e:
         print(f"[API] Error fetching prices from database: {e}")
         raise HTTPException(status_code=500, detail='Could not fetch prices from database')
+
+
+@app.get('/fetch_prices_cbonds', tags=['Pricing'], summary='Fetch cbonds prices from MySQL')
+async def fetch_prices_cbonds():
+    try:
+        return db.select_prices_cbonds()
+    except Exception as e:
+        print(f"[API] Error fetching cbonds prices from database: {e}")
+        raise HTTPException(status_code=500, detail='Could not fetch cbonds prices from database')
+
+
+@app.get('/fetch_curves', tags=['Pricing'], summary='Return swap curves from DB')
+async def fetch_curves_endpoint():
+    try:
+        return db.select_curves()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'Could not fetch curves from DB: {e}')
+
+
+@app.post('/insert_curve', tags=['Pricing'], summary='Insert a new curve into DB')
+async def insert_curve(request: Request, payload: dict = None):
+    if payload is None:
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail='Invalid JSON body')
+    curve_name = (payload.get('curve_name') or '').strip()
+    if not curve_name:
+        raise HTTPException(status_code=400, detail='curve_name is required')
+    try:
+        row_id = db.insert_curve(curve_name, payload)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'Could not insert curve: {e}')
+    global curves
+    curves = _load_curves()
+    return {'status': 'inserted', 'curve_name': curve_name, 'row_id': row_id}
+
+
+@app.post('/update_curve', tags=['Pricing'], summary='Update (upsert) a curve in DB')
+async def update_curve_endpoint(request: Request, payload: dict = None):
+    if payload is None:
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail='Invalid JSON body')
+    curve_name = (payload.get('curve_name') or '').strip()
+    if not curve_name:
+        raise HTTPException(status_code=400, detail='curve_name is required')
+    try:
+        db.upsert_curve(curve_name, payload)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'Could not update curve: {e}')
+    global curves
+    curves = _load_curves()
+    return {'status': 'updated', 'curve_name': curve_name}
+
+_fetch_individual_cds_rate_fn = None
+
+def _get_fetch_individual_cds_rate():
+    global _fetch_individual_cds_rate_fn
+    if _fetch_individual_cds_rate_fn is None:
+        spec = importlib.util.spec_from_file_location(
+            'update_cds', PROJECT_ROOT / 'scripts' / 'update_cds.py'
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _fetch_individual_cds_rate_fn = mod.fetch_individual_cds_rate
+    return _fetch_individual_cds_rate_fn
+
+
+@app.post('/fetch_individual_cds_rate', tags=['Pricing'], summary='Fetch CDS rate from individual investing.com page and update DB')
+async def fetch_individual_cds_rate_endpoint(request: Request, payload: dict = None):
+    if payload is None:
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail='Invalid JSON body')
+    curve_name = (payload.get('curve_name') or '').strip()
+    if not curve_name:
+        raise HTTPException(status_code=400, detail='curve_name is required')
+
+    fetch_fn = _get_fetch_individual_cds_rate()
+    date_str, rate = await asyncio.to_thread(fetch_fn, curve_name)
+
+    if date_str is None:
+        raise HTTPException(status_code=404, detail=f'Could not fetch rate for {curve_name} from investing.com')
+
+    try:
+        all_curves = db.select_curves()
+        curve_data = next((c for c in all_curves if c.get('curve_name') == curve_name), None)
+        if curve_data is None:
+            curve_data = {'curve_name': curve_name, 'curve_type': 'cds'}
+        curve_data['as_of'] = date_str
+        source_str = f"investing.com/rates-bonds/{curve_name} ({date_str})"
+        if curve_data.get('pillars'):
+            curve_data['pillars'][0]['rate'] = rate
+            curve_data['pillars'][0]['source'] = source_str
+        else:
+            curve_data['pillars'] = [{'tenor': '5Y', 'rate': rate, 'source': source_str}]
+        db.upsert_curve(curve_name, curve_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'Could not update curve in DB: {e}')
+
+    global curves
+    curves = _load_curves()
+    return {'curve_name': curve_name, 'date': date_str, 'rate': rate}
+
 
 @app.get('/fetch_asset_timeseries', tags=['Pricing'], summary='Fetch time series for an underlying asset by instrument_id')
 async def fetch_asset_timeseries(instrument_id: str):
@@ -986,10 +1125,26 @@ async def price(payload: PriceRequest):
     asset_data=_asset.to_dict()
     import json as _json
     print(f"[/price] bond_data (full input):\n{_json.dumps(asset_data, indent=2, default=str)}")
+
+    # Resolve credit_spread_bp from the CDS curve if not explicitly set on the asset
+    _original_spread = _asset.credit_spread_bp
+    _spread_resolved = False
+    if _asset.credit_spread_bp is None:
+        cds_curve_name = asset_data.get('cds_curve')
+        if cds_curve_name:
+            cds_curve_obj = curves.get(cds_curve_name)
+            if cds_curve_obj and cds_curve_obj.tenors:
+                tenor_obj = cds_curve_obj.get_tenor('5Y') or cds_curve_obj.tenors[0]
+                _asset.credit_spread_bp = tenor_obj.rate
+                _spread_resolved = True
+                print(f"[/price] Resolved credit_spread_bp={tenor_obj.rate} bp from cds_curve={cds_curve_name}")
+            else:
+                print(f"[/price] cds_curve={cds_curve_name} not found in curves cache — credit_spread_bp stays None")
+
     try:
         result = pricer.price_asset(_asset, curve_json, args)
         print(f"[/price] Pricing succeeded for {instr}: {list(result.keys()) if isinstance(result, dict) else result}")
-        
+
         # Store the pricing result in the database
         try:
             db.insert_prices(result)
@@ -1016,6 +1171,10 @@ async def price(payload: PriceRequest):
         entry['msg'] = f'Could not price instrument: {e}'
         _write_log(log_path, {**entry, 'event': 'pricing_failed', 'error': str(e), 'traceback': tb})
         raise HTTPException(status_code=500, detail=f'Could not price instrument {instr}: {e}')
+    finally:
+        # Restore original spread so the cached Asset object is not mutated permanently
+        if _spread_resolved:
+            _asset.credit_spread_bp = _original_spread
 
 @app.get('/jobs/{job_id}', tags=['Jobs'], summary='Get async job status')
 async def get_job(job_id: str):
@@ -1191,6 +1350,11 @@ def _run_update_curve(job_id: str, cmd: list, log_path: Path):
         JOBS[job_id]['status'] = 'succeeded'
         JOBS[job_id]['end_ts'] = datetime.utcnow().isoformat() + 'Z'
     _write_log(log_path, { 'ts': datetime.utcnow().isoformat() + 'Z', 'event': 'update_curve', 'job': job_id, 'phase': 'succeeded', 'stdout': stdout[:2000] })
+
+    # Reload in-memory curves from DB (scripts already wrote to DB directly)
+    global curves
+    curves = _load_curves()
+    print(f'[API] Reloaded {len(curves)} curves after update_curves job {job_id}')
 
 
 @app.post('/update_curves', tags=['General'], summary='Start async swap curve update (ECB)')
@@ -1531,6 +1695,14 @@ async def fetch_asset_web(isin: str, source: str = 'borsa_italiana_mot'):
     saved = await _save_asset_data(result)
     print(f'[fetch_asset_web] Saved {isin} from {source}: {saved}')
     return result
+
+
+@app.get('/users', tags=['General'], summary='List all registered users (passwords omitted)')
+async def list_users():
+    return [
+        {k: v for k, v in u.items() if k != 'password'}
+        for u in users.values()
+    ]
 
 
 @app.post('/register', tags=['General'], summary='Register a new user')

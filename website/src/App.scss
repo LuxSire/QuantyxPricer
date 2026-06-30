@@ -26,15 +26,45 @@ a { color: var(--link); }
 a:visited { color: var(--link-visited); }
 
 /* Layout: sidebar + main */
-.app-layout { display: flex; gap: 16px; align-items: flex-start }
-.sidebar { width: 240px; background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border: 1px solid rgba(255,255,255,0.03); padding: 12px; border-radius: 6px }
+.app-layout { display: flex; gap: 16px; align-items: stretch; min-height: 80vh; }
+.sidebar { width: 240px; display: flex; flex-direction: column; background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border: 1px solid rgba(255,255,255,0.03); padding: 12px; border-radius: 6px }
 .sidebar-title { color: var(--accent); margin: 0 0 8px 0 }
+.sidebar-section-title { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px }
+.sidebar-top { margin-bottom: 12px }
+.sidebar-scroll { flex: 1; overflow-y: auto; min-height: 0 }
+.sidebar-actions { margin-top: 12px }
+.sidebar-btn-row { display: flex; gap: 8px }
+.sidebar-curves { border-top: 1px solid rgba(255,255,255,0.06); padding-top: 10px; margin-top: 10px }
+.sidebar-bottom { border-top: 1px solid rgba(255,255,255,0.06); padding-top: 10px; margin-top: 8px; display: flex; gap: 8px }
+.lookup-modal-actions { display: flex; gap: 8px; margin-top: 12px }
+.curves-page { padding: 24px }
+.curves-page h2 { margin-top: 12px; margin-bottom: 16px }
+.curves-page-toolbar { display: flex; gap: 8px; align-items: center }
+.curves-page-error { color: #f87171; margin-top: 12px }
+.curves-page-loading { margin-top: 12px }
+.curves-table-wrap { overflow-x: auto }
+.mandatory-fields-table { width: 1px; white-space: nowrap; font-size: 11px }
+.mandatory-fields-table td { padding: 2px 6px !important; font-size: 11px }
+.price-result-table { border: none; align-self: flex-start; font-size: 11px; white-space: nowrap; background: transparent; width: 1px }
+.price-result-header { background: rgba(255,255,255,0.03); color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 6px; border: none; text-align: left }
+.price-result-key { color: var(--muted); font-weight: 600; padding: 2px 6px; border: none }
+.price-result-val { padding: 2px 6px; border: none; text-align: right; font-family: monospace; color: var(--text) }
+.price-result-table tr:nth-child(even) { background: var(--row-even) }
+.price-result-table tr:nth-child(odd) { background: var(--row-odd) }
+.curve-fetch-btn { padding: 3px 8px; font-size: 13px; min-width: 28px }
+.curve-fetch-btn--loading { opacity: 0.6; cursor: default }
+.add-curve-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px }
+.add-curve-label { font-size: 12px; color: #94a3b8; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase }
+.add-curve-input { width: 100%; padding: 7px 9px; font-size: 14px; background: #0b1116; color: #f1f5f9; border: 1px solid #334155; border-radius: 4px; box-sizing: border-box }
+.add-curve-error { color: #fca5a5; font-size: 13px; margin-bottom: 12px }
+.nowrap { white-space: nowrap }
 .filter-group { margin-bottom: 10px; display: flex; flex-direction: column }
 .filter-group label { color: var(--muted); font-size: 13px; margin-bottom: 6px }
 .main-panel { flex: 1 }
 
 /* Gold buttons */
 .clear-btn { background: var(--accent); color: #0b0b0b }
+a.clear-btn { display: inline-block; text-decoration: none }
 
 table { border-collapse: collapse; width: 100%; background: var(--panel); }
 th, td { border: 1px solid var(--border); padding: 8px; text-align: left; color: var(--text) }
@@ -61,7 +91,7 @@ tr:nth-child(odd) { background: var(--row-odd); }
 /* Input and datalist */
 input, select, textarea { background: #0b1116; color: var(--text); border: 1px solid var(--border); padding: 6px 8px }
 input::placeholder { color: rgba(255,255,255,0.25) }
-.lookup-result { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); padding: 12px; border-radius: 6px; max-height: 280px; overflow: auto; }
+.lookup-result { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); padding: 12px; border-radius: 6px; max-height: 280px; overflow: auto; margin-top: 16px }
 .lookup-result pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--text); font-size: 13px; }
 
 .clear-btn {
@@ -114,7 +144,14 @@ input::placeholder { color: rgba(255,255,255,0.25) }
 .dropzone input[type=file] { margin-top: 8px }
 .upload-error { color: #ffb4b4; margin-top: 8px }
 
-.error { color: #ffb4b4; background: rgba(255,0,0,0.03); padding: 8px; border-radius: 4px }
+.error { color: #ffb4b4; background: rgba(255,0,0,0.03); padding: 8px; border-radius: 4px; margin-top: 10px }
+.field-deleted { text-decoration: line-through; opacity: 0.4; cursor: default !important }
+.delete-field-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1001 }
+.delete-field-modal { background: #1e293b; border-radius: 8px; padding: 24px; min-width: 320px; max-width: 480px; box-shadow: 0 8px 32px rgba(0,0,0,0.5) }
+.delete-field-title { font-weight: 700; font-size: 15px; margin-bottom: 12px; color: #f1f5f9 }
+.delete-field-body { color: #94a3b8; font-size: 14px; margin-bottom: 20px; line-height: 1.5 }
+.delete-field-key { color: #fbbf24; background: rgba(251,191,36,0.08); padding: 2px 5px; border-radius: 3px }
+.delete-field-actions { display: flex; gap: 8px; justify-content: flex-end }
 
 /* keep existing styles as fallback selectors for compatibility */
 .detail-row pre, .nested-value pre { font-family: inherit }

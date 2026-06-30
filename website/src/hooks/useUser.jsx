@@ -67,5 +67,15 @@ export function useUser(apiBase = '') {
     window.location.hash = '#/login'
   }, [])
 
-  return { currentUser, loading, error, login, register, logout }
+  const fetchUsers = useCallback(async () => {
+    try {
+      const res = await fetch(`${base}/users`)
+      if (!res.ok) return []
+      return await res.json()
+    } catch {
+      return []
+    }
+  }, [base])
+
+  return { currentUser, loading, error, login, register, logout, fetchUsers }
 }

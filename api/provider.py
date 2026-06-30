@@ -96,19 +96,12 @@ def fetch_from_cbonds(isin_code: str) -> Optional[Dict[str, Any]]:
         headers = {
             "Content-Type": "application/json"
         }
-        print(f"[Provider] Sending cbonds request for {isin_code}")
-        print(f"[Provider] Auth login: {CBONDS_AUTH.get('login', 'NOT SET')}")
-        print(f"[Provider] URL: {CBONDS_API_URL}")
-        print(f"[Provider] Payload: {json.dumps(payload, indent=2)}")
         
         response = requests.post(CBONDS_API_URL, json=payload, headers=headers, timeout=10)
-        print(f"[Provider] Response status: {response.status_code}")
-        print(f"[Provider] Response text: {response.text[:500]}")
         
         response.raise_for_status()
         
         data = response.json()
-        print(f"[Provider] Response JSON: {json.dumps(data, indent=2)[:500]}")
         
         # cbonds API returns data with either "items" or "data" arrays.
         results = []
@@ -119,13 +112,24 @@ def fetch_from_cbonds(isin_code: str) -> Optional[Dict[str, Any]]:
                 results = data["data"]
 
         if isinstance(results, list) and len(results) > 0:
-            print(f"[Provider] Found {len(results)} result(s) from cbonds")
             item = results[0]
             try:
                 if isinstance(item, dict):
                     item['provider'] = 'cbonds'
             except Exception:
                 pass
+
+            # Merge estimates data into the instrument result
+            try:
+                price_data = fetch_estimates_from_cbonds(isin_code.strip())
+                print(f"[Provider] fetch_estimates_from_cbonds received: {json.dumps(price_data, indent=2) if price_data else None}")
+                if price_data and isinstance(price_data, dict):
+                    # instrument keys take precedence over price keys
+                    item = {**price_data, **item}
+                    print(f"[Provider] Merged {len(price_data)} estimates fields into instrument result")
+            except Exception as merge_err:
+                print(f"[Provider] Could not merge cbonds estimates data: {merge_err}")
+
             return item
 
         print(f"[Provider] No results found in cbonds response")
@@ -302,23 +306,19 @@ def fetch_estimates_from_cbonds(isin_code: str) -> Optional[Dict[str, Any]]:
         headers = {
             "Content-Type": "application/json"
         }
-        print(f"[Provider] Sending cbonds estimates request for {isin_code}")
-        print(f"[Provider] Auth login: {CBONDS_AUTH.get('login', 'NOT SET')}")
-        print(f"[Provider] URL: {CBONDS_API_ESTIMATES_URL}")
-        print(f"[Provider] Payload: {json.dumps(payload, indent=2)}")
 
         response = requests.post(CBONDS_API_ESTIMATES_URL, json=payload, headers=headers, timeout=30)
-        print(f"[Provider] Response status: {response.status_code}")
-        print(f"[Provider] Response text: {response.text[:500]}")
+        print(f"[EST Provider] Response status: {response.status_code}")
+        print(f"[EST rovider] Response text: {response.text[:500]}")
 
         response.raise_for_status()
 
         data = response.json()
-        print(f"[Provider] Response JSON: {json.dumps(data, indent=2)[:500]}")
+        print(f"[EST Provider] Response JSON: {json.dumps(data, indent=2)[:500]}")
 
         estimates = data.get('items', [])
         if isinstance(estimates, list) and len(estimates) > 0:
-            print(f"[Provider] Found {len(estimates)} estimate record(s) from cbonds")
+            print(f"[EST Provider] Found {len(estimates)} estimate record(s) from cbonds")
             item = estimates[0]
             try:
                 if isinstance(item, dict):
@@ -328,11 +328,11 @@ def fetch_estimates_from_cbonds(isin_code: str) -> Optional[Dict[str, Any]]:
                 pass
             return item
 
-        print(f"[Provider] No estimate data found in cbonds response for {isin_code}")
+        print(f"[EST Provider] No estimate data found in cbonds response for {isin_code}")
         return None
     except requests.RequestException as e:
-        print(f"[Provider] cbonds estimates API request failed for {isin_code}: {e}")
+        print(f"[EST Provider] cbonds estimates API request failed for {isin_code}: {e}")
         return None
     except json.JSONDecodeError as e:
-        print(f"[Provider] Failed to parse cbonds estimates response: {e}")
+        print(f"[EST Provider] Failed to parse cbonds estimates response: {e}")
         return None

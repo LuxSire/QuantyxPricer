@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useAsset } from './hooks/useAsset'
+import { useUser } from './hooks/useUser'
 
 const FIELD_TYPES = ['string', 'float', 'int', 'list', 'object', 'bool']
 
@@ -66,23 +67,34 @@ function FieldRow({ field, idx, onToggle, onRemove }) {
 }
 
 export default function Settings({ apiBase }) {
+  const [activeTab, setActiveTab] = useState('models')
   const { fetchModels, updateModel } = useAsset(apiBase)
+  const { fetchUsers } = useUser(apiBase)
+
+  // Models tab state
   const [models, setModels] = useState([])
   const [selectedName, setSelectedName] = useState('')
   const [fields, setFields] = useState([])
   const [saving, setSaving] = useState(false)
   const [snack, setSnack] = useState(null)
-
-  // Add-field form
   const [addOpen, setAddOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [newType, setNewType] = useState('string')
   const [newDesc, setNewDesc] = useState('')
   const [newRequired, setNewRequired] = useState(true)
 
+  // Users tab state
+  const [userList, setUserList] = useState(null)
+
   useEffect(() => {
     fetchModels().then(data => setModels(Array.isArray(data) ? data : []))
   }, [fetchModels])
+
+  useEffect(() => {
+    if (activeTab === 'users' && userList === null) {
+      fetchUsers().then(data => setUserList(Array.isArray(data) ? data : []))
+    }
+  }, [activeTab, fetchUsers])
 
   const selectModel = useCallback((name) => {
     setSelectedName(name)
@@ -139,112 +151,163 @@ export default function Settings({ apiBase }) {
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '28px 24px' }}>
 
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <a href="#" style={{ color: '#94a3b8', textDecoration: 'none', fontSize: 14 }}>← Back</a>
-            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Model Settings</h2>
+            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Settings</h2>
           </div>
-          <button
-            onClick={handleUpdate}
-            disabled={saving || !selectedName}
-            style={{
-              padding: '8px 22px', borderRadius: 6, border: 'none',
-              cursor: !selectedName ? 'default' : 'pointer',
-              background: !selectedName ? '#1e293b' : '#facc15',
-              color: !selectedName ? '#4b5563' : '#1a1a1a',
-              fontWeight: 600, fontSize: 14,
-              opacity: saving ? 0.7 : 1,
-              transition: 'background 0.15s',
-            }}
-          >
-            {saving ? 'Updating…' : 'Update'}
-          </button>
+          {activeTab === 'models' && (
+            <button
+              onClick={handleUpdate}
+              disabled={saving || !selectedName}
+              style={{
+                padding: '8px 22px', borderRadius: 6, border: 'none',
+                cursor: !selectedName ? 'default' : 'pointer',
+                background: !selectedName ? '#1e293b' : '#facc15',
+                color: !selectedName ? '#4b5563' : '#1a1a1a',
+                fontWeight: 600, fontSize: 14,
+                opacity: saving ? 0.7 : 1,
+                transition: 'background 0.15s',
+              }}
+            >
+              {saving ? 'Updating…' : 'Update'}
+            </button>
+          )}
         </div>
 
-        {/* Model selector */}
-        <div style={{ marginBottom: 32 }}>
-          <label style={{ display: 'block', fontSize: 13, color: '#94a3b8', marginBottom: 6 }}>Model</label>
-          <select
-            value={selectedName}
-            onChange={e => selectModel(e.target.value)}
-            style={{
-              width: '100%', maxWidth: 380, padding: '8px 12px',
-              background: '#1e293b', border: '1px solid #334155',
-              borderRadius: 6, color: '#e2e8f0', fontSize: 14,
-            }}
-          >
-            <option value="">— select a model —</option>
-            {models.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
-          </select>
+        {/* Tabs */}
+        <div style={{ display: 'flex', borderBottom: '1px solid #334155', marginBottom: 28 }}>
+          {['models', 'users'].map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              style={{
+                padding: '8px 20px', border: 'none', cursor: 'pointer',
+                background: 'transparent', fontSize: 14, fontWeight: 600,
+                color: activeTab === tab ? '#facc15' : '#64748b',
+                borderBottom: activeTab === tab ? '2px solid #facc15' : '2px solid transparent',
+                textTransform: 'capitalize', transition: 'color 0.15s',
+              }}
+            >
+              {tab === 'models' ? 'Models' : 'Users'}
+            </button>
+          ))}
         </div>
 
-        {selectedName && (
-          <>
-            {/* Required fields section */}
-            <Section title="Required Fields" count={requiredRows.length} accent="#facc15">
-              <FieldTable rows={requiredRows} onToggle={toggleRequired} onRemove={removeField} />
-            </Section>
-
-            {/* Optional fields section */}
-            <Section title="Optional Fields" count={optionalRows.length} accent="#94a3b8">
-              <FieldTable rows={optionalRows} onToggle={toggleRequired} onRemove={removeField} />
-            </Section>
-
-            {/* Add field */}
-            {addOpen ? (
-              <div style={{
-                background: '#1e293b', border: '1px solid #334155',
-                borderRadius: 8, padding: '16px 20px', marginTop: 16,
-              }}>
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                  <div>
-                    <label style={lbl}>Name</label>
-                    <input
-                      value={newName}
-                      onChange={e => setNewName(e.target.value)}
-                      placeholder="field_name"
-                      onKeyDown={e => e.key === 'Enter' && addField()}
-                      style={inp}
-                      autoFocus
-                    />
-                  </div>
-                  <div>
-                    <label style={lbl}>Type</label>
-                    <select value={newType} onChange={e => setNewType(e.target.value)} style={inp}>
-                      {FIELD_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  <div style={{ flex: 1, minWidth: 180 }}>
-                    <label style={lbl}>Description</label>
-                    <input
-                      value={newDesc}
-                      onChange={e => setNewDesc(e.target.value)}
-                      placeholder="optional description"
-                      style={{ ...inp, width: '100%', boxSizing: 'border-box' }}
-                    />
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 1 }}>
-                    <Switch checked={newRequired} onChange={() => setNewRequired(p => !p)} />
-                    <span style={{ fontSize: 13, color: newRequired ? '#facc15' : '#94a3b8' }}>
-                      {newRequired ? 'Required' : 'Optional'}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, paddingBottom: 1 }}>
-                    <button onClick={addField} style={btnPrimary}>Add</button>
-                    <button onClick={() => setAddOpen(false)} style={btnSecondary}>Cancel</button>
-                  </div>
-                </div>
-              </div>
+        {/* Users tab */}
+        {activeTab === 'users' && (
+          <div>
+            {userList === null ? (
+              <div style={{ color: '#64748b', fontSize: 14 }}>Loading users…</div>
+            ) : userList.length === 0 ? (
+              <div style={{ color: '#64748b', fontSize: 14 }}>No users found.</div>
             ) : (
-              <button
-                onClick={() => setAddOpen(true)}
-                style={{ ...btnSecondary, marginTop: 16 }}
-              >
-                + Add Field
-              </button>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #1e293b' }}>
+                    <th style={th}>Email</th>
+                    <th style={th}>First name</th>
+                    <th style={th}>Last name</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {userList.map(u => (
+                    <tr key={u.email} style={{ borderBottom: '1px solid #1e293b' }}>
+                      <td style={td}>{u.email}</td>
+                      <td style={td}>{u.firstname || '—'}</td>
+                      <td style={td}>{u.lastname || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
-          </>
+          </div>
         )}
+
+        {/* Models tab */}
+        {activeTab === 'models' && (
+          <div>
+            {/* Model selector */}
+            <div style={{ marginBottom: 32 }}>
+              <label style={{ display: 'block', fontSize: 13, color: '#94a3b8', marginBottom: 6 }}>Model</label>
+              <select
+                value={selectedName}
+                onChange={e => selectModel(e.target.value)}
+                style={{
+                  width: '100%', maxWidth: 380, padding: '8px 12px',
+                  background: '#1e293b', border: '1px solid #334155',
+                  borderRadius: 6, color: '#e2e8f0', fontSize: 14,
+                }}
+              >
+                <option value="">— select a model —</option>
+                {models.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
+              </select>
+            </div>
+
+            {selectedName && (
+              <>
+                <Section title="Required Fields" count={requiredRows.length} accent="#facc15">
+                  <FieldTable rows={requiredRows} onToggle={toggleRequired} onRemove={removeField} />
+                </Section>
+
+                <Section title="Optional Fields" count={optionalRows.length} accent="#94a3b8">
+                  <FieldTable rows={optionalRows} onToggle={toggleRequired} onRemove={removeField} />
+                </Section>
+
+                {addOpen ? (
+                  <div style={{
+                    background: '#1e293b', border: '1px solid #334155',
+                    borderRadius: 8, padding: '16px 20px', marginTop: 16,
+                  }}>
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                      <div>
+                        <label style={lbl}>Name</label>
+                        <input
+                          value={newName}
+                          onChange={e => setNewName(e.target.value)}
+                          placeholder="field_name"
+                          onKeyDown={e => e.key === 'Enter' && addField()}
+                          style={inp}
+                          autoFocus
+                        />
+                      </div>
+                      <div>
+                        <label style={lbl}>Type</label>
+                        <select value={newType} onChange={e => setNewType(e.target.value)} style={inp}>
+                          {FIELD_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 180 }}>
+                        <label style={lbl}>Description</label>
+                        <input
+                          value={newDesc}
+                          onChange={e => setNewDesc(e.target.value)}
+                          placeholder="optional description"
+                          style={{ ...inp, width: '100%', boxSizing: 'border-box' }}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 1 }}>
+                        <Switch checked={newRequired} onChange={() => setNewRequired(p => !p)} />
+                        <span style={{ fontSize: 13, color: newRequired ? '#facc15' : '#94a3b8' }}>
+                          {newRequired ? 'Required' : 'Optional'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, paddingBottom: 1 }}>
+                        <button onClick={addField} style={btnPrimary}>Add</button>
+                        <button onClick={() => setAddOpen(false)} style={btnSecondary}>Cancel</button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setAddOpen(true)} style={{ ...btnSecondary, marginTop: 16 }}>
+                    + Add Field
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
       </div>
 
       {/* Snackbar */}

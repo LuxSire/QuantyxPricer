@@ -98,7 +98,7 @@ export function usePrices(apiBase) {
     setUpdatingCurves(true)
     setSnack({ visible: true, message: 'Starting curve update...', type: 'info' })
     try {
-      const resp = await fetch((apiBase ? `${apiBase}` : '') + '/update_curve', { method: 'POST' })
+      const resp = await fetch((apiBase ? `${apiBase}` : '') + '/update_curves', { method: 'POST' })
       if (!resp.ok) {
         const txt = await resp.text().catch(() => '<no body>')
         setSnack({ visible: true, message: `Update curves failed: ${txt}`, type: 'error' })
@@ -273,6 +273,64 @@ export function usePrices(apiBase) {
     }
   }
 
+  const fetchCurves = async () => {
+    try {
+      const resp = await fetch((apiBase ? `${apiBase}` : '') + '/fetch_curves')
+      if (!resp.ok) return []
+      return await resp.json()
+    } catch {
+      return []
+    }
+  }
+
+  const fetchIndividualCdsRate = async (curve_name) => {
+    const endpoint = (apiBase ? `${apiBase}` : '') + '/fetch_individual_cds_rate'
+    try {
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ curve_name }),
+      })
+      if (!resp.ok) {
+        const txt = await resp.text().catch(() => '<no body>')
+        return { ok: false, error: txt }
+      }
+      const data = await resp.json().catch(() => null)
+      return { ok: true, data }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
+  }
+
+  const insertCurve = async (payload) => {
+    const endpoint = (apiBase ? `${apiBase}` : '') + '/insert_curve'
+    try {
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!resp.ok) {
+        const txt = await resp.text().catch(() => '<no body>')
+        return { ok: false, error: txt }
+      }
+      const data = await resp.json().catch(() => null)
+      return { ok: true, data }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
+  }
+
+  const fetchPricesCbonds = async () => {
+    try {
+      const resp = await fetch((apiBase ? `${apiBase}` : '') + '/fetch_prices_cbonds')
+      if (!resp.ok) return []
+      return await resp.json()
+    } catch {
+      return []
+    }
+  }
+
   const fetchAssetTimeSeries = async (instrumentId) => {
     if (!instrumentId) return null
     const endpoint = (apiBase ? `${apiBase}` : '') + `/fetch_asset_timeseries?instrument_id=${encodeURIComponent(instrumentId)}`
@@ -302,5 +360,9 @@ export function usePrices(apiBase) {
     insertPrices,
     pricing_single_asset,
     fetchAssetTimeSeries,
+    fetchCurves,
+    insertCurve,
+    fetchIndividualCdsRate,
+    fetchPricesCbonds,
   }
 }

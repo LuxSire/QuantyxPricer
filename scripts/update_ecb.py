@@ -9,10 +9,21 @@ For each curve with an ecb_name or ebc_name field, this script:
 """
 
 import json
+import sys
 import requests
 from datetime import datetime
 from pathlib import Path
 import xml.etree.ElementTree as ET
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT / 'api') not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT / 'api'))
+try:
+    import db as _db
+    _DB_AVAILABLE = True
+except Exception:
+    _db = None
+    _DB_AVAILABLE = False
 
 
 def fetch_latest_ecb_observation(series_id):
@@ -123,7 +134,12 @@ def update_swap_curves_ecb(swap_curves_path=None, verbose=True):
                 if verbose:
                     print(f"[ECB]   ✓ Updated first pillar to {value:.4f} (as of {date_str})")
                 updated_count += 1
-        
+                if _DB_AVAILABLE:
+                    try:
+                        _db.upsert_curve(curve["curve_name"], curve)
+                    except Exception as dbe:
+                        print(f"[ECB]   Warning: DB write failed for {curve['curve_name']}: {dbe}")
+
         elif "spot" in curve:
             # For FX curves, update the spot rate
             curve["spot"]["rate"] = value
@@ -131,7 +147,12 @@ def update_swap_curves_ecb(swap_curves_path=None, verbose=True):
             if verbose:
                 print(f"[ECB]   ✓ Updated spot to {value:.4f} (as of {date_str})")
             updated_count += 1
-        
+            if _DB_AVAILABLE:
+                try:
+                    _db.upsert_curve(curve["curve_name"], curve)
+                except Exception as dbe:
+                    print(f"[ECB]   Warning: DB write failed for {curve['curve_name']}: {dbe}")
+
         else:
             if verbose:
                 print(f"[ECB]   Skipped (unknown structure)")

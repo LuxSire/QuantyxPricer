@@ -129,10 +129,11 @@ def update_swap_curves_ecb(swap_curves_path=None, verbose=True):
             # For curves with pillars (OIS, forward curves), update the first pillar
             # (Assumption: first pillar represents the base rate for the curve)
             if curve["pillars"]:
-                curve["pillars"][0]["rate"] = value
+                rate = value / 100.0 if curve["pillars"][0].get("tenor") == "ON" else value
+                curve["pillars"][0]["rate"] = rate
                 curve["pillars"][0]["source"] = f"ECB SDW {ecb_name} ({date_str})"
                 if verbose:
-                    print(f"[ECB]   ✓ Updated first pillar to {value:.4f} (as of {date_str})")
+                    print(f"[ECB]   ✓ Updated first pillar to {rate:.4f} (as of {date_str})")
                 updated_count += 1
                 if _DB_AVAILABLE:
                     try:

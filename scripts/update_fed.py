@@ -177,7 +177,8 @@ def update_swap_curves_fed(swap_curves_path=None, verbose=True):
         _curve_written = False
 
         if "pillars" in curve and curve["pillars"]:
-            curve["pillars"][0]["rate"] = value
+            rate = value / 100.0 if curve["pillars"][0].get("tenor") == "ON" else value
+            curve["pillars"][0]["rate"] = rate
             curve["pillars"][0]["source"] = f"FRED {series_id} ({date_str})"
             updated_count += 1
             _curve_written = True
